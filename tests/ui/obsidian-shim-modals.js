@@ -2,14 +2,22 @@ const host = () => document.getElementById("modal-host");
 export class Modal {
   constructor(app) {
     this.app = app;
-    this.modalEl = document.createElement("div"); this.modalEl.className = "modal";
+    // The real DOM shape: `.modal-container > .modal-bg + .modal`. The container is what
+    // Obsidian centres the modal with, and appending `.modal` straight to the host meant
+    // no harness could show a dialog sitting behind the soft keyboard.
+    this.containerEl = document.createElement("div");
+    this.containerEl.className = "modal-container";
+    this.bgEl = this.containerEl.appendChild(document.createElement("div"));
+    this.bgEl.className = "modal-bg";
+    this.modalEl = this.containerEl.appendChild(document.createElement("div"));
+    this.modalEl.className = "modal";
     this.titleEl = document.createElement("div"); this.titleEl.className = "modal-title";
     this.contentEl = document.createElement("div"); this.contentEl.className = "modal-content";
     this.modalEl.appendChild(this.titleEl); this.modalEl.appendChild(this.contentEl);
     this.scope = { register: () => {} };
   }
-  open() { host().appendChild(this.modalEl); this.onOpen && this.onOpen(); }
-  close() { this.onClose && this.onClose(); this.modalEl.remove(); }
+  open() { host().appendChild(this.containerEl); this.onOpen && this.onOpen(); }
+  close() { this.onClose && this.onClose(); this.containerEl.remove(); }
 }
 export class SuggestModal extends Modal { setPlaceholder() {} }
 export class FuzzySuggestModal extends Modal { setPlaceholder() {} }

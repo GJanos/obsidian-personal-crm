@@ -4,6 +4,9 @@
 <title>PRM calendar harness</title>
 <link rel="stylesheet" href="styles.css">
 <style>
+  /* Obsidian sets this globally in app.css. Without it the harness adds padding
+     on top of every height cap, so a max-height read 32px larger than it should. */
+  *, *::before, *::after { box-sizing: border-box; }
   :root {
     --background-primary: #1e1e1e; --background-secondary: #252525;
     --background-modifier-border: #3a3a3a; --background-modifier-hover: #2c2c2c;

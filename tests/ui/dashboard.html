@@ -4,6 +4,9 @@
 <title>PRM dashboard harness</title>
 <link rel="stylesheet" href="styles.css">
 <style>
+  /* Obsidian sets this globally in app.css. Without it the harness adds padding
+     on top of every height cap, so a max-height read 32px larger than it should. */
+  *, *::before, *::after { box-sizing: border-box; }
   /* Approximate Obsidian's theme variables and the view-content box. */
   :root {
     --background-primary: #1e1e1e; --background-secondary: #252525;
