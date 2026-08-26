@@ -3,7 +3,7 @@
 All notable changes to Personal CRM. Versions follow
 [semantic versioning](https://semver.org/).
 
-## Unreleased
+## 1.7.1 — 2026-08-26
 
 ### Fixed
 
