@@ -3,6 +3,23 @@
 All notable changes to Personal CRM. Versions follow
 [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- **The soft keyboard no longer hides the notes box.** Tapping into the notes field when
+  logging a contact on a phone put the keyboard over the very field you were typing in.
+  Obsidian keeps a `--keyboard-height` variable and shrinks the app container by it, but
+  not dialogs — and a dialog is centred in a box that still spans the whole screen, so the
+  bottom of a tall one sits behind the keyboard, and the notes box is the last field in it.
+  Dialogs are now capped to the space the keyboard leaves *and* lifted by half its height,
+  which is the offset that re-centres them in what is visible, and focusing a field scrolls
+  it into view. The dialog moves back when the keyboard closes.
+- A dialog's content could not scroll on a tablet at all, and on a phone only appeared to:
+  `.modal-content` is a flex item, so without `min-height: 0` it refuses to shrink and
+  renders past the dialog instead of scrolling inside it. Lower fields in a long dialog were
+  unreachable.
+
 ## 1.7.0 — 2026-08-19
 
 ### Changed

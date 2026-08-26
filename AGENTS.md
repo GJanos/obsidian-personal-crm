@@ -367,6 +367,43 @@ Two traps that are not about size:
   483px max-content width inside a 331px pane, and pushed the sort control off the edge
   behind `.prm-view { overflow: hidden }`. Any pane under 700px had this, phone or not.
 
+### 4.10 The soft keyboard, and why a capped dialog still isn't enough
+
+Obsidian maintains `--keyboard-height` on the **document element** and writes it at
+runtime; it reads it back the same way, and `Platform.mobileSoftKeyboardVisible` is kept
+current too. So take the host's word for the keyboard rather than deriving it from
+`visualViewport`. But note what Obsidian does with it:
+
+```css
+body.is-mobile .app-container { max-height: calc(100vh - var(--keyboard-height)); }
+```
+
+**The app container, not the modal.** And a plain dialog on a phone is *centred* —
+`.modal-container { position: absolute; top: 0; bottom: 0; align-items: center }` — inside a
+box that still spans the full `100vh`. (Only `.mod-confirmation`, `.mod-lg` and
+`.mod-sidebar-layout` are bottom sheets.) So the lower half of a tall dialog sits behind the
+keyboard, which is why logging a contact showed no notes box: it is the last field in it.
+
+Three things were needed, and the first two are not enough on their own:
+
+1. **Cap the height** — `max-height: calc(100vh - var(--keyboard-height) - safe-area-top)`.
+2. **Lift it.** Capping alone leaves it centred in the full height: a 500px dialog in a
+   900px box with a 400px keyboard runs y=200→700 while the keyboard starts at y=500.
+   `translateY(calc(var(--keyboard-height) / -2))` re-centres it in what is visible —
+   half the keyboard height is exactly the offset. Safe against Obsidian's
+   swipe-to-dismiss, which sets an inline `transform` but resets it to `""` in both its
+   `cancel` and `finish` paths.
+3. **`min-height: 0` on `.modal-content`.** Without it `overflow-y: auto` does *nothing*:
+   `.modal` is a flex column, so the content is a flex item whose default
+   `min-height: auto` refuses to shrink, and it renders past the capped dialog instead of
+   scrolling inside it. Same trap as `.prm-list`. Obsidian never sets a min-height, and
+   only sets `overflow: auto` on `.is-phone` — a tablet gets `hidden`, so a shortened
+   dialog there would clip its lower fields with no way to reach them.
+
+Then `PrmModal` scrolls a focused field into view, twice — once immediately and again after
+300ms, because the space available changes as the keyboard opens. **Every dialog extends
+`PrmModal`, not `Modal`**, so a new one cannot miss this; `test-mobile` fails if one does.
+
 ## 5. Build, deploy, verify
 
 ```bash
@@ -397,7 +434,7 @@ that output when a suite actually fails.
 
 Each suite is a standalone Node script with its own tiny `check()` helper. They bundle the
 **real** source with esbuild and drive it against a fake vault (`tests/stub-obsidian.cjs`)
-that stores real text and computes a realistic metadata cache. ~555 assertions across 26
+that stores real text and computes a realistic metadata cache. ~560 assertions across 26
 files.
 
 Shared helpers live in `tests/build.cjs`:
@@ -453,6 +490,14 @@ straight from `../../src/`, so they cannot drift from the source; `obsidian-shim
 gitignored — **run `npm run ui` again after any change to `src/` or `styles.css`**, or you
 are looking at the previous build.
 
+`keyboard.html` is the one for §4.10: it builds a real `.modal-container` and drives
+Obsidian's own `--keyboard-height` through `window.__setKeyboard(px)`, with a striped block
+standing in for the keyboard so you can see what it covers. `?modal=log|panel` picks the
+dialog. **`el.focus()` does not fire `focusin` in an automated page** (Chrome suppresses
+focus events when the document lacks OS focus), so testing the scroll-into-view needs
+`dispatchEvent(new FocusEvent("focusin", { bubbles: true }))` — the handler is fine, the
+event never arrives.
+
 `?device=phone` and `?device=tablet` put the same body classes on that Obsidian does and
 make the shim's `Platform` agree with them (see §4.9). Omit it for desktop. Compare the
 two: a mobile change that alters the desktop layout is a bug.
@@ -472,6 +517,8 @@ each hiding a real bug:
 | `__matches` treating a space as part of a class name | `querySelectorAll(".prm-header-buttons button")` returned `[]`, and three assertions over the result passed against nothing |
 | `setIcon` as a no-op in the Node stub | "does this button have an icon?" was unanswerable, which matters once a phone hides the label |
 | a leaf with no padding, clipping on the wrapper instead of on `.view-content` | Obsidian's own 12px side padding and `overflow: auto` on `.view-content` — 24px of missing width, and the horizontal scrollbar it caused, invisible |
+| no global `box-sizing: border-box`, which app.css sets | every height cap measured 32px larger than it should, so a capped dialog looked like it overflowed for the wrong reason |
+| `Modal.open()` appending `.modal` straight to the host, with no `.modal-container` | the container is what centres a dialog, so no harness could show one sitting behind the keyboard |
 
 The lesson: **when a stub reimplements host behaviour, copy the host's real shape** —
 including selector specificity. A harness that cannot fail is not evidence. If a user
@@ -508,6 +555,11 @@ The bar is 73 nodes and 9 SVGs on both platforms; it was **not** switched to the
 `appendIcon` because that would save ~0.05 ms on a path already inside budget. Scaling with
 the selection is linear — at 3,000 selected the bar render is 0.255 ms and `selected()`
 0.14 ms — so the quadratic warned about below has not come back.
+
+After the keyboard fix, modal open/close on a phone against the mobile CSS switched off:
+person panel 0.565 ms vs 0.635 ms, log contact 0.200 ms vs 0.217 ms — no measurable cost
+against the ~2 ms panel budget. (The harness stubs markdown rendering, so these are not the
+full real-world open cost; what they measure is the delta, which is zero.)
 
 **Warm the loop before believing a number.** The first unwarmed `renderAll()` at 3,000
 people reads ~6.9 ms against a warmed 1.75 ms, which looks exactly like a 2× regression.
