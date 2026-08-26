@@ -360,6 +360,49 @@ export interface BulkAction {
 }
 
 /**
+ * Base for the plugin's own dialogs, so the soft keyboard cannot bury the field you
+ * are typing into.
+ *
+ * Obsidian maintains `--keyboard-height` on the document element and shrinks
+ * `.app-container` by it — but **not** the modal. A plain modal on a phone is centred by
+ * `.modal-container { align-items: center }` inside a box that still spans the full
+ * `100vh`, so with the keyboard up the lower half of a tall dialog sits behind it. That is
+ * why logging a contact showed no notes box: it is the last thing in the dialog.
+ *
+ * The CSS half of the fix lifts and caps the dialog (see `styles.css`, "mobile keyboard").
+ * This half handles what CSS cannot: the field may still be below the fold of a dialog
+ * that now scrolls, so focusing one scrolls it into view — once immediately, and again
+ * after the keyboard has finished opening, because the space available changes underneath.
+ *
+ * Every dialog here extends this rather than `Modal` directly, so a new one gets the
+ * behaviour without having to remember it. Obsidian's own `SuggestModal` prompts are
+ * top-anchored and already keyboard-aware, so they are left alone.
+ */
+export class PrmModal extends Modal {
+	constructor(app: App) {
+		super(app);
+		this.modalEl.addClass("prm-modal");
+		if (!Platform.isMobile) return;
+
+		this.contentEl.addEventListener("focusin", (evt) => {
+			const el = evt.target;
+			if (!(el instanceof HTMLElement)) return;
+			if (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA" && el.tagName !== "SELECT") {
+				return;
+			}
+			const bring = () => {
+				// The dialog may already be gone by the time the second call lands.
+				if (el.isConnected) el.scrollIntoView({ block: "center", behavior: "smooth" });
+			};
+			bring();
+			// Obsidian marks the animation with `body.keyboard-animating`; 300ms clears it
+			// on both platforms, and a second scroll costs nothing if nothing moved.
+			window.setTimeout(bring, 300);
+		});
+	}
+}
+
+/**
  * The filter tabs and the search box as a sheet.
  *
  * A phone hides the whole toolbar while a selection is live, which is right — none of
@@ -367,7 +410,7 @@ export interface BulkAction {
  * a selection worth extending: the tabs, and the search. Selecting everyone in "Due",
  * switching to "Drifting" and selecting those too is the flow this exists for.
  */
-export class FilterSheetModal extends Modal {
+export class FilterSheetModal extends PrmModal {
 	constructor(
 		plugin: PrmPlugin,
 		private opts: {
@@ -426,7 +469,7 @@ export class FilterSheetModal extends Modal {
  * indistinguishable — on a pair of actions where picking the wrong one edits every
  * selected note.
  */
-export class BulkActionsModal extends Modal {
+export class BulkActionsModal extends PrmModal {
 	constructor(
 		plugin: PrmPlugin,
 		private count: number,
@@ -701,7 +744,7 @@ export class SnoozeModal extends SuggestModal<SnoozeChoice> {
  * Asking for the tier here matters: a person with no tier isn't tracked, so
  * creating one without it would quietly produce someone the plugin ignores.
  */
-export class CreatePersonModal extends Modal {
+export class CreatePersonModal extends PrmModal {
 	private name = "";
 	private tierId: string;
 	private createButton: HTMLButtonElement | null = null;
@@ -794,7 +837,7 @@ export class CreatePersonModal extends Modal {
  * A destructive-action confirmation. Native `window.confirm` blocks the whole
  * app and looks nothing like Obsidian, so this replaces it.
  */
-export class ConfirmModal extends Modal {
+export class ConfirmModal extends PrmModal {
 	constructor(
 		app: App,
 		private title: string,
@@ -829,7 +872,7 @@ export class ConfirmModal extends Modal {
 
 // ----------------------------------------------------------------- prompt modal
 
-export class PromptModal extends Modal {
+export class PromptModal extends PrmModal {
 	private value: string;
 
 	constructor(
@@ -880,7 +923,7 @@ export class PromptModal extends Modal {
 
 // -------------------------------------------------------------- log contact modal
 
-export class LogContactModal extends Modal {
+export class LogContactModal extends PrmModal {
 	private date = todayISO();
 	private note = "";
 	private saveButton: HTMLButtonElement | null = null;
@@ -989,7 +1032,7 @@ export class LogContactModal extends Modal {
  * the fast path, but they can't show the note's own content, and having to
  * remember which small icon does what is the thing that makes a row feel opaque.
  */
-export class PersonActionsModal extends Modal {
+export class PersonActionsModal extends PrmModal {
 	private date = todayISO();
 	private note = "";
 	private preview: Component | null = null;
@@ -1421,7 +1464,7 @@ export class PersonActionsModal extends Modal {
  * content — the facts and talking points already written down — so there's
  * something to actually say.
  */
-export class ReachOutModal extends Modal {
+export class ReachOutModal extends PrmModal {
 	private cursor = 0;
 	/** Replaced per preview so old rendered subtrees are released as we advance. */
 	private preview: Component | null = null;
@@ -1607,7 +1650,7 @@ export class ReachOutModal extends Modal {
  * Fast keyboard pass over unclassified people: press a number to assign a tier,
  * `p` to never track, space to skip.
  */
-export class TriageModal extends Modal {
+export class TriageModal extends PrmModal {
 	private cursor = 0;
 	private assigned = 0;
 	private preview: Component | null = null;

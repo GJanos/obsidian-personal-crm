@@ -1,4 +1,4 @@
-import { ButtonComponent, Modal, Notice, Setting } from "obsidian";
+import { ButtonComponent, Notice, Setting } from "obsidian";
 import type PrmPlugin from "./main";
 import {
 	contactKey,
@@ -10,7 +10,7 @@ import {
 	PersonCreation,
 	planChanges,
 } from "./contacts";
-import { PersonPickerModal } from "./modals";
+import { PersonPickerModal, PrmModal } from "./modals";
 
 /** What the user chose to do with a contact that matched nothing. */
 type Decision =
@@ -26,7 +26,7 @@ const MAX_ROWS = 200;
  * hundreds of notes should never be a surprise. The whole apply is a single
  * undoable step.
  */
-export class ContactImportModal extends Modal {
+export class ContactImportModal extends PrmModal {
 	private contacts: ExternalContact[] = [];
 	private creations: PersonCreation[] = [];
 	private sourceName = "";

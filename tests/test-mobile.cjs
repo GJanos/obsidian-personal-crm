@@ -434,6 +434,68 @@ async function bootView(count = 1) {
     });
   }
 
+  console.log("\nThe soft keyboard cannot bury the field you are typing into");
+  {
+    const M = require(harness.bundleModule("src/modals.ts"));
+    const SRC = fs.readFileSync(path.join(harness.repoRoot, "src", "modals.ts"), "utf8");
+    const IMPORT_SRC = fs.readFileSync(
+      path.join(harness.repoRoot, "src", "import-modal.ts"), "utf8");
+
+    check("every dialog extends PrmModal, so a new one cannot miss this", () => {
+      // The behaviour lives in a base class rather than in each dialog precisely so it
+      // cannot be forgotten. Only the base itself may extend Modal directly.
+      const direct = [...SRC.matchAll(/export class (\w+) extends Modal \{/g)].map((m) => m[1]);
+      assert.deepStrictEqual(direct, ["PrmModal"],
+        "these extend Modal directly and so skip the keyboard handling: " + direct.join(", "));
+      assert.ok(!/export class \w+ extends Modal \{/.test(IMPORT_SRC),
+        "import-modal.ts extends Modal directly");
+      assert.ok(/extends PrmModal \{/.test(IMPORT_SRC), "import-modal.ts is not re-based");
+    });
+
+    check("the base tags the modal element so CSS can reach it", () => {
+      const m = new M.PrmModal({});
+      assert.ok(m.modalEl.classes.has("prm-modal"),
+        "no prm-modal class: the stylesheet has nothing to hook");
+    });
+
+    check("the dialog is lifted and capped from Obsidian's own --keyboard-height", () => {
+      // Obsidian maintains the variable but does not apply it to modals. Reading it is
+      // what makes this follow the host rather than re-deriving the keyboard from
+      // visualViewport.
+      const body = ruleBody("body.is-mobile .modal.prm-modal {");
+      assert.ok(body, "the keyboard rule is gone");
+      assert.ok(/max-height:\s*calc\([^;]*--keyboard-height/.test(body),
+        "height is not capped by the keyboard: " + body);
+      // Capping alone leaves it centred in the full height and still overlapping; half
+      // the keyboard is the offset that re-centres it in what is visible.
+      assert.ok(/transform:\s*translateY\(calc\([^;]*--keyboard-height[^;]*\/\s*-?2/.test(body),
+        "not lifted by half the keyboard height: " + body);
+    });
+
+    check("the dialog's content can actually scroll", () => {
+      // `overflow-y: auto` did nothing on its own: `.modal` is a flex column, so
+      // `.modal-content` is a flex item whose default `min-height: auto` refuses to
+      // shrink, and the content rendered past the capped dialog instead of scrolling
+      // inside it. Obsidian only sets `overflow: auto` on `.is-phone`, never a
+      // min-height, and never on a tablet at all.
+      const body = ruleBody("body.is-mobile .prm-modal .modal-content {");
+      assert.ok(body, "the content rule is gone");
+      assert.ok(/overflow-y:\s*auto/.test(body), "content does not scroll: " + body);
+      assert.ok(/min-height:\s*0/.test(body),
+        "without min-height: 0 the content overflows the dialog instead of scrolling: " + body);
+    });
+
+    check("none of it reaches the desktop", () => {
+      for (const sel of ["body.is-mobile .modal.prm-modal {",
+                         "body.is-mobile .prm-modal .modal-content {"]) {
+        assert.ok(CSS.includes(sel), "missing " + sel);
+      }
+      // A rule without the platform class would apply everywhere.
+      const stray = [...CSS.matchAll(/^\.prm-modal[^{]*\{/gm)].map((m) => m[0]);
+      assert.deepStrictEqual(stray, [], "unscoped .prm-modal rules: " + stray.join(", "));
+    });
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
 })();

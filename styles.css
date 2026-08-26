@@ -1980,3 +1980,54 @@ body.is-phone .prm-selecting .prm-toolbar {
 	font-weight: 600;
 	color: var(--text-normal);
 }
+
+/* ------------------------------------------------------------- mobile keyboard */
+/*
+ * Obsidian maintains `--keyboard-height` on the document element and shrinks
+ * `.app-container` by it. It does **not** shrink modals: a plain dialog on a phone is
+ * centred by `.modal-container { align-items: center }` in a box that still spans the
+ * full `100vh`, so with the keyboard up the bottom of a tall dialog sits behind it —
+ * which is why logging a contact showed no notes box, that being the last field in it.
+ *
+ * Capping the height alone would not help, because the dialog stays centred in the full
+ * height: a 500px dialog in a 900px box with a 400px keyboard runs from y=200 to y=700
+ * while the keyboard starts at y=500. It has to move up as well, and half the keyboard's
+ * height is exactly the offset that re-centres it in what is still visible.
+ *
+ * Obsidian's swipe-to-dismiss sets an inline `transform` on the modal, which wins while
+ * the gesture runs, and both its `cancel` and `finish` paths reset it to "" — so this rule
+ * resumes afterwards rather than being clobbered.
+ */
+body.is-mobile .modal.prm-modal {
+	max-height: calc(100vh - var(--keyboard-height, 0px) - var(--safe-area-inset-top, 0px));
+	transform: translateY(calc(var(--keyboard-height, 0px) / -2));
+	transition: transform 150ms ease-out;
+}
+
+/*
+ * Only `.is-phone .modal-content` gets `overflow: auto` from the app; the base rule is
+ * `overflow: hidden`. So on a tablet a dialog the keyboard has shortened would clip its
+ * lower fields with no way to reach them, and on a phone the scrolling that
+ * `scrollIntoView` depends on needs to be here for both.
+ */
+body.is-mobile .prm-modal .modal-content {
+	overflow-y: auto;
+	/*
+	 * Required, and the reason `overflow: auto` alone did nothing: `.modal` is a flex
+	 * column, so this is a flex item whose default `min-height: auto` refuses to shrink
+	 * below its content. Without this the content overflowed *past* the capped modal
+	 * instead of scrolling inside it — the notes box was rendering 47px below the
+	 * dialog's own bottom edge, where no amount of scrolling could reach it. Same trap
+	 * as `.prm-list` above.
+	 */
+	min-height: 0;
+}
+
+/*
+ * The note preview is a fixed 30vh (24vh in a narrow pane) of the *screen*, which is
+ * ~50% of what is left once the keyboard is up — spent on reading while you are typing.
+ * It keeps a glance of the note and gives the rest back to the field.
+ */
+body.is-mobile .prm-modal .prm-preview {
+	max-height: min(30vh, calc(50vh - var(--keyboard-height, 0px) * 0.5));
+}
