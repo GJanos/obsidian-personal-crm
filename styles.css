@@ -402,10 +402,39 @@
 	width: 90vw;
 }
 
-/* The daily reminder: the dashboard's rows, grouped by the day they fall due. */
-.prm-reminder-modal {
-	max-width: 44rem;
-	width: 90vw;
+/* The daily reminder: the dashboard's rows, grouped by the day they fall due.
+   A floating panel, not a modal: no backdrop, nothing behind it blocked. Below the
+   modal layer, so the log and snooze dialogs its rows open land on top of it. */
+.prm-reminder-panel {
+	position: fixed;
+	top: calc(var(--header-height, 40px) + 0.75rem);
+	right: 1rem;
+	z-index: var(--layer-popover);
+	width: min(36rem, calc(100vw - 2rem));
+	max-height: calc(100vh - var(--header-height, 40px) - 3rem);
+	display: flex;
+	flex-direction: column;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-l);
+	box-shadow: var(--shadow-l);
+}
+
+.prm-reminder-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0.6rem 0.75rem 0.4rem 1rem;
+}
+
+.prm-reminder-title {
+	font-weight: 600;
+	font-size: var(--font-ui-medium);
+}
+
+.prm-reminder-body {
+	overflow-y: auto;
+	padding: 0 1rem 1rem;
 }
 
 .prm-reminder-summary {
@@ -1337,10 +1366,15 @@ a.prm-place:hover {
 		flex-wrap: nowrap;
 	}
 
-	.prm-reachout-modal,
-	.prm-reminder-modal {
+	.prm-reachout-modal {
 		width: 96vw;
 	}
+}
+
+.is-phone .prm-reminder-panel {
+	left: 0.5rem;
+	right: 0.5rem;
+	width: auto;
 }
 
 .is-phone .prm-row-actions,

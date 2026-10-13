@@ -529,6 +529,8 @@ if (typeof global.HTMLInputElement === "undefined") global.HTMLInputElement = cl
 if (typeof global.HTMLTextAreaElement === "undefined") global.HTMLTextAreaElement = class {};
 if (typeof global.HTMLElement === "undefined") global.HTMLElement = class {};
 if (typeof global.activeDocument === "undefined") global.activeDocument = { activeElement: null };
+// The reminder panel floats on the document body.
+if (!global.activeDocument.body) global.activeDocument.body = new Stub("body");
 
 /** Obsidian's createFragment(): a DocumentFragment with the element helpers on it. */
 if (typeof global.createFragment === "undefined") {

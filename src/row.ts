@@ -29,6 +29,8 @@ export interface RowHooks {
 	 * past the due-soon window; on the dashboard an on-track row has no chip.
 	 */
 	showDueWhenOk?: boolean;
+	/** One of the row's log or snooze buttons was used. */
+	onAction?: (record: PersonRecord) => void;
 }
 
 export const STATUS_LABEL: Record<PersonStatus, string> = {
@@ -246,15 +248,18 @@ export function renderPersonRow(
 	const actions = row.createDiv({ cls: "prm-row-actions" });
 
 	iconButton(actions, "check", "Log contact today", async () => {
+		hooks.onAction?.(record);
 		const file = plugin.app.vault.getAbstractFileByPath(record.path);
 		if (file instanceof TFile) await plugin.logContact(file, todayISO());
 	});
 
 	iconButton(actions, "pencil", "Log contact with details…", () => {
+		hooks.onAction?.(record);
 		new LogContactModal(plugin, record).open();
 	});
 
 	iconButton(actions, "alarm-clock", "Snooze", () => {
+		hooks.onAction?.(record);
 		new SnoozeModal(plugin, record).open();
 	});
 

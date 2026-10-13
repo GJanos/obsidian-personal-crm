@@ -109,22 +109,69 @@ function seen(v, name, n) {
     check("and remembers the day", () => assert.strictEqual(plugin.settings.lastReminderDate, iso(Date.now())));
     check("no text notice any more", () =>
       assert.ok(!notices.some((n) => String(n).includes("reach out to"))));
-    const content = JSON.stringify(opened[0].contentEl, (k, val) => (k === "parent" ? undefined : val));
+    const content = JSON.stringify(opened[0].el, (k, val) => (k === "parent" ? undefined : val));
     check("the pop-up lists the overdue person", () => assert.ok(content.includes("Akos")));
+    check("it floats on the page rather than opening a modal", () =>
+      assert.ok(activeDocument.body.children.includes(opened[0].el)));
+    opened[0].close();
+    check("X takes it off the page", () => assert.ok(!activeDocument.body.children.includes(opened[0].el)));
+  }
+  {
+    const { plugin, opened } = await boot((v) => seen(v, "Akos", 20));
+    plugin.__cmds.find((c) => c.id === "show-reminder").callback();
+    check("opening it again replaces the panel instead of stacking a second", () =>
+      assert.strictEqual(activeDocument.body.children.filter((c) => c.classes.has("prm-reminder-panel")).length, 1));
+    opened.at(-1).close();
   }
   {
     const { plugin, opened, app } = await boot((v) => { seen(v, "Akos", 20); seen(v, "Bea", 30); });
-    const modal = opened[0];
-    const rows = () => modal.contentEl.querySelectorAll(".prm-row");
+    const panel = opened[0];
+    const rows = () => panel.el.querySelectorAll(".prm-row");
+    const done = () => rows().filter((r) => r.classes.has("prm-row-done")).map((r) => r.dataset.prmPath);
     const before = rows().map((r) => r.dataset.prmPath);
-    await plugin.logContact(app.vault.getAbstractFileByPath("People/Akos.md"), iso(Date.now()));
+
+    // Logged somewhere else — the dashboard, a note — is news, not something done here.
+    await plugin.logContact(app.vault.getAbstractFileByPath("People/Bea.md"), iso(Date.now()));
     plugin.engine.rebuild();
-    const after = rows();
+    check("a change made elsewhere doesn't mark the row done", () => assert.deepStrictEqual(done(), []));
+
+    const akos = rows().find((r) => r.dataset.prmPath === "People/Akos.md");
+    const logBtn = akos.querySelectorAll("button").find((b) => b.attrs["aria-label"] === "Log contact today");
+    await logBtn.onclick();
+    await new Promise((r) => setTimeout(r, 10));
+    plugin.engine.rebuild();
     check("logging someone from the pop-up keeps every row where it was", () =>
-      assert.deepStrictEqual(after.map((r) => r.dataset.prmPath), before));
-    check("and marks only that row done", () =>
-      assert.deepStrictEqual(after.filter((r) => r.classes.has("prm-row-done")).map((r) => r.dataset.prmPath),
-        ["People/Akos.md"]));
+      assert.deepStrictEqual(rows().map((r) => r.dataset.prmPath), before));
+    check("and marks that row done", () => assert.deepStrictEqual(done(), ["People/Akos.md"]));
+    panel.close();
+  }
+  {
+    // Seen on the Sunday of a week note, k days ago, with a k-day cadence: due today.
+    // Dated by the week's Monday instead, they'd be six days overdue.
+    let k = 7;
+    while (new Date(Date.now() - k * day).getUTCDay() !== 0) k++;
+    const sunday = ago(k);
+    // The ISO week is the one its Thursday falls in.
+    const thursday = new Date(Date.parse(sunday) - 3 * day);
+    const yearStart = Date.UTC(thursday.getUTCFullYear(), 0, 1);
+    const week = Math.ceil(((thursday - yearStart) / day + 1) / 7);
+    const weekNote = `Weeks/${thursday.getUTCFullYear()}-W${String(week).padStart(2, "0")}.md`;
+    const { opened } = await boot((v) => {
+      v.addFile("People/Dad.md", `---\ntags:\n  - people\nprm-tier: inner\nprm-cadence: ${k}\n---\n`);
+      v.addFile(weekNote, `*${sunday.slice(5)}*\ncalled [[Dad]]\n`);
+    }, { journalSources: [{ folder: "Weeks", format: "GGGG-[W]WW", dayLine: "^\\*(\\d{2}-\\d{2})\\*\\s*$" }] });
+    const panel = opened[0];
+    const section = (label) => panel.el.querySelectorAll(".prm-reminder-section")
+      .find((s) => s.children[0].text.startsWith(label));
+    const paths = (s) => s.querySelectorAll(".prm-row").map((r) => r.dataset.prmPath);
+    check("startup waits for week-note day lines: due today, not overdue", () => {
+      assert.ok(panel, "no panel opened");
+      assert.strictEqual(section("Overdue"), undefined);
+      assert.deepStrictEqual(paths(section("Today")), ["People/Dad.md"]);
+    });
+    check("and is not marked done", () =>
+      assert.strictEqual(panel.el.querySelectorAll(".prm-row-done").length, 0));
+    panel?.close();
   }
   {
     const { opened } = await boot((v) => seen(v, "Akos", 20), { lastReminderDate: iso(Date.now()) });

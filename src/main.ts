@@ -43,7 +43,7 @@ import {
 } from "./frontmatter";
 import { defaultPersonNote, renderTemplate, sanitizeNoteName } from "./templates";
 import { reminderBuckets, shouldShowReminder } from "./reminder";
-import { ReminderModal } from "./reminder-modal";
+import { ReminderPanel } from "./reminder-panel";
 
 interface WriteOptions {
 	silent?: boolean;
@@ -67,6 +67,7 @@ export default class PrmPlugin extends Plugin {
 	private statusBarEl: HTMLElement | null = null;
 	private statusTextEl: HTMLElement | null = null;
 	private firstBuildDone = false;
+	private reminderPanel: ReminderPanel | null = null;
 	/**
 	 * False until the workspace is ready. Obsidian replays `create` for every file
 	 * in the vault while it loads, and writing into notes during that is both
@@ -127,6 +128,9 @@ export default class PrmPlugin extends Plugin {
 	}
 
 	onunload(): void {
+		// The panel lives on the document body, outside anything Obsidian tears down.
+		this.reminderPanel?.close();
+
 		// Obsidian tears down registered views, events and DOM for us — but not a
 		// pending debounce.
 		//
@@ -148,7 +152,9 @@ export default class PrmPlugin extends Plugin {
 		this.refreshStatusBar();
 		if (!this.firstBuildDone) {
 			this.firstBuildDone = true;
-			if (this.settings.notifyOnStartup) this.dailyReminder();
+			// After the week notes' day lines are read: until then a link there is dated
+			// by the week's Monday, which reports people overdue who aren't.
+			if (this.settings.notifyOnStartup) void this.engine.whenDayLinesRead().then(() => this.dailyReminder());
 		}
 	}
 
@@ -1461,8 +1467,8 @@ export default class PrmPlugin extends Plugin {
 		void this.saveSettings();
 	}
 
-	/** Open the reminder now; null, and nothing shown, when nobody is due in the window. */
-	openReminder(): ReminderModal | null {
+	/** Open the reminder now, replacing one already open; null, and nothing shown, when nobody is due. */
+	openReminder(): ReminderPanel | null {
 		const buckets = reminderBuckets(
 			this.engine.all(),
 			todayISO(),
@@ -1470,8 +1476,12 @@ export default class PrmPlugin extends Plugin {
 			this.settings.tiers.map((t) => t.id),
 		);
 		if (buckets.total === 0) return null;
-		const modal = new ReminderModal(this, buckets);
-		modal.open();
-		return modal;
+		this.reminderPanel?.close();
+		const panel = new ReminderPanel(this, buckets, () => {
+			if (this.reminderPanel === panel) this.reminderPanel = null;
+		});
+		this.reminderPanel = panel;
+		panel.open();
+		return panel;
 	}
 }
