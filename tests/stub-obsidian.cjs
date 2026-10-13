@@ -310,14 +310,19 @@ function buildCache(content) {
 
   const links = [];
   const embeds = [];
+  // Body only: real Obsidian reports `with: ["[[Alex]]"]` in `frontmatterLinks`,
+  // never in `links`. Scanning the whole text made a frontmatter link look like a
+  // body mention, so "frontmatter links count" could not be tested at all.
+  const body = content.slice(fmEnd);
   const linkRe = /(!?)\[\[([^\]]+)\]\]/g;
-  for (const m of content.matchAll(linkRe)) {
+  for (const m of body.matchAll(linkRe)) {
     const inner = m[2];
     const target = inner.split("|")[0];
+    const start = fmEnd + m.index;
     const rec = {
       link: target,
       displayText: inner.split("|")[1] ?? target,
-      position: { start: { offset: m.index }, end: { offset: m.index + m[0].length } },
+      position: { start: { offset: start }, end: { offset: start + m[0].length } },
     };
     if (m[1] === "!") embeds.push(rec);
     else links.push(rec);
@@ -327,14 +332,15 @@ function buildCache(content) {
   // `link` holding the target exactly as written — percent-encoding included — and
   // ![alt](x) going to embeds. External targets are not links at all.
   const mdRe = /(!?)\[([^\]]*)\]\(([^)\s]+)\)/g;
-  for (const m of content.matchAll(mdRe)) {
+  for (const m of body.matchAll(mdRe)) {
     let target = m[3];
     if (target.startsWith("<") && target.endsWith(">")) target = target.slice(1, -1);
     if (/^[a-z][a-z0-9+.-]*:/i.test(target)) continue;   // http:, mailto:, obsidian:
+    const start = fmEnd + m.index;
     const rec = {
       link: target,
       displayText: m[2],
-      position: { start: { offset: m.index }, end: { offset: m.index + m[0].length } },
+      position: { start: { offset: start }, end: { offset: start + m[0].length } },
     };
     if (m[1] === "!") embeds.push(rec);
     else links.push(rec);

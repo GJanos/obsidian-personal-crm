@@ -70,3 +70,29 @@ export function dedupeTags(tags: string[]): string[] {
 	}
 	return out;
 }
+
+/**
+ * Link targets written as wikilink values under a frontmatter key, for
+ * `with: ["[[Alex]]", "[[Ervin|Ervi]]"]` or a single `host: "[[Alex]]"`.
+ *
+ * Plain text is not a link and is skipped: "Alex" could be anyone. An unquoted
+ * `- [[Alex]]` is legal YAML for a list holding a list holding "Alex", so that
+ * shape is read as a link too. The display part after `|` is dropped.
+ */
+export function frontmatterLinkTargets(fm: Record<string, unknown>, key: string): string[] {
+	const raw = fm[key];
+	const values: unknown[] = Array.isArray(raw) ? raw : [raw];
+	const out: string[] = [];
+	for (const value of values) {
+		let inner: string | null = null;
+		if (typeof value === "string") {
+			inner = /^\s*\[\[([^\]]+)\]\]\s*$/.exec(value)?.[1] ?? null;
+		} else if (Array.isArray(value) && value.length === 1 && Array.isArray(value[0])) {
+			const nested: unknown = (value[0] as unknown[])[0];
+			if (typeof nested === "string") inner = nested;
+		}
+		const target = inner?.split("|")[0].trim();
+		if (target) out.push(target);
+	}
+	return out;
+}

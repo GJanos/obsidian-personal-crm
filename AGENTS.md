@@ -73,6 +73,13 @@ Worked example: follow-ups index only a task's `{path, line, offset}`; the task'
 are read when a panel displays them, from the handful of files that actually hold one.
 Had the text been indexed, rebuild cost would scale with vault bytes.
 
+**One deliberate exception (this fork): day lines.** A dated folder with a `dayLine`
+pattern holds multi-day notes (week notes with a `*MM-DD*` line per day). The cache
+can't see those lines, so `day-lines.ts` reads the files, but never inside `rebuild()`:
+`get` answers from an mtime-keyed memory or queues the file, the note is dated by its
+filename for that pass, and `flush` reads the queue and requests one more rebuild. A
+read failure is stored as "no day lines" for that mtime; leaving it unknown would loop.
+
 ### 3.2 An unchecked task is an intention, not contact
 
 Links inside unchecked tasks, blockquotes, code fences and embeds are excluded from

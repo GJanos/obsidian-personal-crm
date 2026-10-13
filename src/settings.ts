@@ -94,6 +94,11 @@ export interface PrmSettings {
 
 	/** A dated note linking to someone counts as contact. */
 	journalMentionsCountAsContact: boolean;
+	/**
+	 * Frontmatter keys whose `[[link]]` values count as contact on a dated note's
+	 * date, like an event's `with:` list.
+	 */
+	contactFrontmatterKeys: string[];
 	/** Ignore links in unchecked tasks, quotes, code and embeds. */
 	ignoreIntentLinks: boolean;
 	dueSoonWindowDays: number;
@@ -157,6 +162,7 @@ export const DEFAULT_SETTINGS: PrmSettings = {
 	defaultTierId: "casual",
 
 	journalMentionsCountAsContact: true,
+	contactFrontmatterKeys: ["with"],
 	ignoreIntentLinks: true,
 	dueSoonWindowDays: 7,
 
@@ -185,11 +191,27 @@ export const FRONTMATTER_KEYS = {
 	birthday: "prm-birthday",
 	relationship: "prm-relationship",
 	location: "prm-location",
+	/** On a person: the groups they belong to, as `[[links]]` to group notes. */
+	groups: "groups",
+	/** On a person: don't count their groups' contact as theirs. */
+	ignoreGroup: "prm-ignore-group",
 } as const;
 
 export function tierById(settings: PrmSettings, id: string | null): Tier | null {
 	if (!id) return null;
 	return settings.tiers.find((t) => t.id === id) ?? null;
+}
+
+/** Why a day-line pattern can't be used, or undefined when it can (empty means off). */
+function dayLineProblem(value: string): string | undefined {
+	const raw = value.trim();
+	if (raw.length === 0) return undefined;
+	try {
+		new RegExp(raw);
+	} catch {
+		return "Not a valid regular expression.";
+	}
+	return raw.includes("(") ? undefined : "Capture the day's MM-DD in a group: (\\d{2}-\\d{2}).";
 }
 
 /** Normalize a user-typed vault path: handles `\`, leading `/`, and Unicode form. */
@@ -206,11 +228,26 @@ function splitList(raw: string): string[] {
 		.filter((v) => v.length > 0);
 }
 
+/**
+ * Leave the settings page that `el` is on. The API has no way to close a
+ * declarative page, so this presses the page's own back button.
+ */
+function closeSettingPage(el: HTMLElement): void {
+	const back = el.closest(".setting-page")?.querySelector<HTMLElement>(".setting-page-back-button");
+	back?.click();
+}
+
 /** Settings that hold a list but are edited as one comma-separated field. */
 const CSV_KEYS: Record<
 	string,
-	"personTags" | "personExclusions" | "createdDateKeys" | "markerTags" | "locationKeys"
+	| "personTags"
+	| "personExclusions"
+	| "createdDateKeys"
+	| "markerTags"
+	| "locationKeys"
+	| "contactFrontmatterKeys"
 > = {
+	contactFrontmatterKeysCsv: "contactFrontmatterKeys",
 	personTagsCsv: "personTags",
 	personExclusionsCsv: "personExclusions",
 	createdDateKeysCsv: "createdDateKeys",
@@ -270,6 +307,7 @@ export class PrmSettingTab extends PluginSettingTab {
 				case "journalSources": {
 					const source = s.journalSources[index];
 					if (!source) return "";
+					if (parts[2] === "dayLine") return source.dayLine ?? "";
 					return parts[2] === "folder" ? source.folder : source.format;
 				}
 				case "tiers": {
@@ -304,6 +342,7 @@ export class PrmSettingTab extends PluginSettingTab {
 					const source = s.journalSources[index];
 					if (!source) break;
 					if (parts[2] === "folder") source.folder = cleanFolderPath(String(value));
+					else if (parts[2] === "dayLine") source.dayLine = String(value).trim();
 					else source.format = String(value).trim();
 					break;
 				}
@@ -315,6 +354,7 @@ export class PrmSettingTab extends PluginSettingTab {
 						const n = Number(value);
 						if (Number.isFinite(n) && n >= 1) tier.cadenceDays = Math.round(n);
 					} else if (parts[2] === "color") tier.color = String(value);
+					this.refreshTierRows();
 					break;
 				}
 			}
@@ -641,6 +681,20 @@ export class PrmSettingTab extends PluginSettingTab {
 							value.trim().length === 0 ? "Enter a date format." : undefined,
 					},
 				},
+				{
+					name: "Day line pattern",
+					// Optional, so no `validate`: every validator here rejects blank, and blank
+					// is this field's "off". A bad pattern is reported in the description.
+					desc:
+						dayLineProblem(source.dayLine ?? "") ??
+						"Optional, for notes that hold several days, like a week note. A regex for the line that starts each day, with the day's MM-DD as its first group. Links take the date of the day line above them. Leave empty to date the whole note by its name.",
+					aliases: ["week", "weekly", "day heading"],
+					control: {
+						type: "text" as const,
+						key: `journalSources.${index}.dayLine`,
+						placeholder: "^\\*(\\d{2}-\\d{2})\\*\\s*$",
+					},
+				},
 			],
 		}));
 
@@ -671,6 +725,12 @@ export class PrmSettingTab extends PluginSettingTab {
 				name: "Links in dated notes count as contact",
 				desc: "Recommended. Your journal already names who you saw, so contact history builds itself. Individual people can opt out with prm-ignore-journal.",
 				control: { type: "toggle", key: "journalMentionsCountAsContact" },
+			},
+			{
+				name: "Frontmatter keys that count as contact",
+				desc: "Comma-separated. On a dated note, [[links]] under these keys count as contact on the note's date, like an event's with: list. Plain names don't count; only links do.",
+				aliases: ["with", "attendees", "frontmatter", "properties", "events"],
+				control: { type: "text", key: "contactFrontmatterKeysCsv", placeholder: "with" },
 			},
 			{
 				name: "Ignore mentions that aren't contact",
@@ -821,6 +881,40 @@ export class PrmSettingTab extends PluginSettingTab {
 					name: "Colour",
 					control: { type: "color" as const, key: `tiers.${index}.color` },
 				},
+				{
+					name: "Stored as",
+					desc: "The prm-tier value in a person's note. Renaming it rewrites the notes on this tier.",
+					aliases: ["id", "rename", "prm-tier"],
+					// A text control would save on every keystroke, and each save
+					// here rewrites notes, so the rename waits for the button.
+					render: (setting) => {
+						let draft = tier.id;
+						setting.addText((text) =>
+							text
+								.setPlaceholder("close")
+								.setValue(tier.id)
+								.onChange((value) => (draft = value)),
+						);
+						setting.addButton((button) =>
+							button.setButtonText("Rename").onClick(() => this.renameTier(tier, draft)),
+						);
+					},
+				},
+				{
+					name: "Remove this tier",
+					desc: "People on it stop being tracked until you give them another tier. Their notes aren't changed.",
+					aliases: ["delete", "remove"],
+					// Obsidian draws no delete button on a list row that opens a
+					// page (only the Delete key works), so the page carries one.
+					render: (setting) => {
+						setting.addButton((button) =>
+							button
+								.setButtonText("Remove tier")
+								.setDestructive()
+								.onClick(() => this.removeTier(tier, () => closeSettingPage(button.buttonEl))),
+						);
+					},
+				},
 			],
 		}));
 
@@ -837,44 +931,97 @@ export class PrmSettingTab extends PluginSettingTab {
 			},
 			onDelete: (index: number) => {
 				const tier = tiers[index];
-				if (!tier) return;
-
-				const affected = this.plugin.engine.all().filter((r) => r.tierId === tier.id).length;
-				const remove = () => {
-					tiers.splice(index, 1);
-					const s = this.plugin.settings;
-					if (s.defaultTierId === tier.id) s.defaultTierId = tiers[0]?.id ?? "";
-					void this.plugin.saveSettings();
-					this.update();
-				};
-
-				// Deleting a tier silently untracks everyone on it, so say so first.
-				if (affected === 0) {
-					remove();
-					return;
-				}
-				new ConfirmModal(
-					this.app,
-					`Remove "${tier.label}"?`,
-					`${affected} ${affected === 1 ? "person is" : "people are"} on this tier. ` +
-						"Removing it stops tracking them until you assign a new one. Their notes aren't changed.",
-					"Remove tier",
-					remove,
-				).open();
+				if (tier) this.removeTier(tier, () => this.update());
 			},
 			addItem: {
 				name: "Add a tier",
 				action: () => {
 					const s = this.plugin.settings;
+					// Pages are found by name, so a second "New tier" would open the first.
 					let id = "new-tier";
+					let label = "New tier";
 					let n = 2;
-					while (s.tiers.some((t) => t.id === id)) id = `new-tier-${n++}`;
-					s.tiers.push({ id, label: "New tier", cadenceDays: 60, color: "#888888" });
+					while (s.tiers.some((t) => t.id === id || t.label === label)) {
+						id = `new-tier-${n}`;
+						label = `New tier ${n++}`;
+					}
+					s.tiers.push({ id, label, cadenceDays: 60, color: "#888888" });
 					void this.plugin.saveSettings();
 					this.update();
 				},
 			},
 		};
+	}
+
+	/**
+	 * Redraw the tier rows after an edit on a tier's page. update() would
+	 * re-render the open page too, and Obsidian finds that page by its name,
+	 * the label being edited, so it would come up blank. The list is drawn
+	 * from settingItems when the page closes, so refreshing that is enough.
+	 */
+	private refreshTierRows(): void {
+		this.settingItems = this.getSettingDefinitions();
+	}
+
+	/** Remove a tier, first warning when people are on it. */
+	private removeTier(tier: Tier, done: () => void): void {
+		const affected = this.plugin.engine.all().filter((r) => r.tierId === tier.id).length;
+		const remove = () => {
+			const s = this.plugin.settings;
+			const index = s.tiers.indexOf(tier);
+			if (index < 0) return;
+			s.tiers.splice(index, 1);
+			if (s.defaultTierId === tier.id) s.defaultTierId = s.tiers[0]?.id ?? "";
+			if (s.newPersonTier === tier.id) s.newPersonTier = "";
+			void this.plugin.saveSettings();
+			this.refreshTierRows();
+			done();
+		};
+
+		// Deleting a tier silently untracks everyone on it, so say so first.
+		if (affected === 0) {
+			remove();
+			return;
+		}
+		new ConfirmModal(
+			this.app,
+			`Remove "${tier.label}"?`,
+			`${affected} ${affected === 1 ? "person is" : "people are"} on this tier. ` +
+				"Removing it stops tracking them until you assign a new one. Their notes aren't changed.",
+			"Remove tier",
+			remove,
+		).open();
+	}
+
+	/** Change a tier's stored id, rewriting prm-tier in the notes that use it. */
+	private renameTier(tier: Tier, raw: string): void {
+		const id = raw.trim().toLowerCase().replace(/\s+/g, "-");
+		if (id === tier.id) return;
+		if (!/^[a-z0-9][a-z0-9_-]*$/.test(id)) {
+			new Notice("Use letters, digits, - or _ for the stored value.");
+			return;
+		}
+		if (this.plugin.settings.tiers.some((t) => t.id === id)) {
+			new Notice(`Another tier is already stored as ${id}.`);
+			return;
+		}
+
+		const affected = this.plugin.engine.all().filter((r) => r.tierId === tier.id).length;
+		const rename = () => {
+			void this.plugin.renameTierId(tier.id, id).then(() => this.refreshTierRows());
+		};
+		if (affected === 0) {
+			rename();
+			return;
+		}
+		new ConfirmModal(
+			this.app,
+			`Rename to "${id}"?`,
+			`${affected} ${affected === 1 ? "note says" : "notes say"} prm-tier: ${tier.id}. ` +
+				`They'll be changed to prm-tier: ${id}.`,
+			"Rename",
+			rename,
+		).open();
 	}
 
 	private tierDefaultGroup(): SettingDefinitionItem {

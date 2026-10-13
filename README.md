@@ -75,6 +75,21 @@ An ordinary `[[link]]` in a dated note. Deliberately **not** counted:
 
 A *completed* task (`- [x] called Sam`) does count.
 
+Also counted (this fork):
+
+- **`[[links]]` in chosen frontmatter keys**, `with` by default. An event note with
+  `with: ["[[Alex]]", "[[Ervin]]"]` counts as contact with both on the note's date.
+  Plain names don't count; only links do.
+- **The day inside a week note.** Give a dated folder a *day line pattern* (e.g.
+  `^\*(\d{2}-\d{2})\*\s*$` for a `*10-07*` line per day) and a link takes the date of
+  the day line above it, instead of the date in the filename (the week's Monday).
+  These notes are the one thing the plugin reads as text: once per change, off the
+  index rebuild.
+- **Group contact.** A group is a person-like note (say `People/Groups/Climbers.md`)
+  with its own `prm-tier`, so it shows up in the queue like anyone else. A person lists
+  their groups as `groups: ["[[Climbers]]"]`, and every date the group was seen counts
+  for them too. Seeing one member doesn't count for the group.
+
 ## Setup
 
 Enable the plugin. Nothing is guessed: no folder names are assumed. On first run it
@@ -398,6 +413,8 @@ existing fields.
 | `prm-ignore-journal` | `true` to ignore dated-note mentions for this person. |
 | `prm-birthday` | `04-17` or `1999-04-17`. |
 | `prm-relationship` | Free text, e.g. `climbing gym`. |
+| `groups` | `[[links]]` to group notes; their contact counts as yours. |
+| `prm-ignore-group` | `true` to not inherit contact from your groups. |
 
 The contact importer also writes plain `email`, `phone`, `company`, `title` and
 `location` keys — deliberately un-prefixed, since they're useful to Dataview and

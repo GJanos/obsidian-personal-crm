@@ -3,6 +3,29 @@
 All notable changes to Personal CRM. Versions follow
 [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **Day-accurate week notes.** A dated folder takes an optional day line pattern. In a
+  week note with one `*MM-DD*` line per day, a link now gets the day it's written under
+  rather than the Monday the filename names, with the year rolling over in a week that
+  spans New Year. The day lines are plain text the metadata cache doesn't record, so
+  those notes are read from disk: once per modification, in the background, followed by
+  one rebuild. Until then a note is dated by its filename, as before.
+- **Frontmatter links count as contact.** On a dated note, `[[links]]` under the keys in
+  *Frontmatter keys that count as contact* (`with` by default) count on the note's date.
+  Events that list who was there now feed contact history.
+- **Groups.** A person's `groups: ["[[Group]]"]` gives them every contact date of that
+  group note, unless `prm-ignore-group: true`. A group is tracked like a person, with
+  its own tier. It goes one way: a member's contact doesn't count for the group, and
+  a group in a group passes on only its own contact.
+
+### Fixed
+
+- The test stub reported links written in frontmatter as body links, which real
+  Obsidian never does, so frontmatter-only behaviour could not be tested.
+
 ## 1.7.1 — 2026-08-26
 
 ### Fixed

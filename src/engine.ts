@@ -23,8 +23,22 @@ import {
 	isISODate,
 	todayISO,
 } from "./dates";
-import { isInFolder, parseJournalDate } from "./journal";
-import { asText, dedupeTags, frontmatterOf, readTagList } from "./frontmatter";
+import {
+	type DayLine,
+	type JournalSource,
+	dateInWeek,
+	dayLinePattern,
+	isInFolder,
+	parseJournalDate,
+} from "./journal";
+import {
+	asText,
+	dedupeTags,
+	frontmatterLinkTargets,
+	frontmatterOf,
+	readTagList,
+} from "./frontmatter";
+import { DayLineIndex } from "./day-lines";
 
 interface Range {
 	start: number;
@@ -49,11 +63,29 @@ export class PrmEngine {
 	private locationKeys: string[] = [];
 	private listeners = new Set<() => void>();
 	private diag: PrmDiagnostics = emptyDiagnostics();
+	private dayLines: DayLineIndex;
+	/** Each source's compiled day-line pattern, compiled once per rebuild. */
+	private dayPatterns = new Map<JournalSource, RegExp | null>();
+	/** Unresolved `groups:` link targets per person path, gathered while classifying. */
+	private groupLinks = new Map<string, string[]>();
 
+	/**
+	 * `onBackgroundRebuild` runs when week-note day lines finish loading and the
+	 * index can be rebuilt with exact days; the plugin passes its own reindex so
+	 * the status bar follows. Defaults to a plain rebuild.
+	 */
 	constructor(
 		private app: App,
 		private settings: PrmSettings,
-	) {}
+		onBackgroundRebuild?: () => void,
+	) {
+		this.dayLines = new DayLineIndex(app, onBackgroundRebuild ?? (() => this.rebuild()));
+	}
+
+	/** Resolves once week-note day lines have been read and the index rebuilt with them. */
+	whenDayLinesRead(): Promise<void> {
+		return this.dayLines.settled();
+	}
 
 	onChange(cb: () => void): () => void {
 		this.listeners.add(cb);
@@ -144,6 +176,12 @@ export class PrmEngine {
 		// Built once per rebuild, not once per person.
 		this.locationKeys = [FRONTMATTER_KEYS.location, ...this.settings.locationKeys];
 
+		this.dayPatterns = new Map();
+		for (const source of this.settings.journalSources) {
+			this.dayPatterns.set(source, dayLinePattern(source));
+		}
+		this.groupLinks = new Map();
+
 		this.markerTagSet = new Set<string>();
 		for (const tag of [...this.settings.markerTags, ...this.settings.personTags]) {
 			const clean = tag.trim().replace(/^#/, "").toLowerCase();
@@ -199,7 +237,8 @@ export class PrmEngine {
 		const countMentions = this.settings.journalMentionsCountAsContact;
 		// One map for both passes: contact attribution and follow-ups resolve links
 		// the same way, and building it twice is pure duplication.
-		const needsLinks = countMentions || (trackLoops && taskFiles.length > 0);
+		const needsLinks =
+			countMentions || (trackLoops && taskFiles.length > 0) || this.groupLinks.size > 0;
 		const linkMap = needsLinks && people.size > 0 ? buildPersonLinkMap(people) : null;
 
 		for (const file of journalCandidates) {
@@ -213,7 +252,15 @@ export class PrmEngine {
 			else this.notesByDate.set(date, [file]);
 
 			if (!countMentions || people.size === 0 || !cache || !linkMap) continue;
-			diag.interactionsFound += this.attributeLinks(file, cache, date, people, linkMap);
+			const dateAt = this.dayDating(file, date);
+			diag.interactionsFound += this.attributeLinks(file, cache, date, dateAt, people, linkMap);
+		}
+		// Week notes whose day lines aren't known yet were dated by their Monday;
+		// read them now, and a follow-up rebuild dates them exactly.
+		this.dayLines.flush();
+
+		if (this.groupLinks.size > 0 && linkMap) {
+			diag.interactionsFound += this.propagateGroupContact(people, linkMap);
 		}
 
 		if (trackLoops && taskFiles.length > 0 && linkMap) {
@@ -436,28 +483,18 @@ export class PrmEngine {
 	private attributeLinks(
 		file: TFile,
 		cache: CachedMetadata,
-		date: string,
+		noteDate: string,
+		dateAt: ((offset: number) => string) | null,
 		people: Map<string, PersonRecord>,
 		linkMap: PersonLinkMap,
 	): number {
-		const links = cache.links;
-		if (!links || links.length === 0) return 0;
-
-		const filtering = this.settings.ignoreIntentLinks;
-		const excluded = filtering ? excludedRanges(cache) : [];
 		let added = 0;
-
-		for (const link of links) {
-			const offset = link.position?.start?.offset;
-			if (filtering && typeof offset === "number" && inAnyRange(offset, excluded)) {
-				continue;
-			}
-
-			const targetPath = this.resolvePersonLink(link.link, file.path, linkMap);
-			if (!targetPath) continue;
+		const credit = (target: string, date: string) => {
+			const targetPath = this.resolvePersonLink(target, file.path, linkMap);
+			if (!targetPath) return;
 
 			const record = people.get(targetPath);
-			if (!record || record.ignoreJournal) continue;
+			if (!record || record.ignoreJournal) return;
 
 			// First journal wins, but a journal always beats a date harvested from the
 			// person's own note: clicking the date should open the day, not the log
@@ -467,8 +504,102 @@ export class PrmEngine {
 				record.sources.set(date, file.path);
 			}
 			added++;
+		};
+
+		const links = cache.links ?? [];
+		const filtering = this.settings.ignoreIntentLinks;
+		const excluded = filtering && links.length > 0 ? excludedRanges(cache) : [];
+		for (const link of links) {
+			const offset = link.position?.start?.offset;
+			if (filtering && typeof offset === "number" && inAnyRange(offset, excluded)) {
+				continue;
+			}
+			credit(link.link, dateAt && typeof offset === "number" ? dateAt(offset) : noteDate);
 		}
 
+		// `with: ["[[Alex]]"]` on an event says who was there as plainly as a body
+		// link does. Frontmatter has no body position, so the intent rules don't apply,
+		// and it belongs to the note as a whole, so it takes the note's date.
+		const keys = this.settings.contactFrontmatterKeys;
+		if (keys.length > 0) {
+			const fm = frontmatterOf(cache);
+			for (const key of keys) {
+				for (const target of frontmatterLinkTargets(fm, key)) credit(target, noteDate);
+			}
+		}
+
+		return added;
+	}
+
+	/**
+	 * For a note in a source with a day-line pattern, a function from a link's
+	 * offset to the day it's written under. Null when the source has no pattern or
+	 * the note's day lines aren't loaded yet; the note's own date applies then.
+	 *
+	 * A link above the first day line (the week's goals, its table) keeps the
+	 * note's date, and so does one under a day line that falls outside the week.
+	 */
+	private dayDating(file: TFile, noteDate: string): ((offset: number) => string) | null {
+		const source = this.settings.journalSources.find((s) => isInFolder(file.path, s.folder));
+		const pattern = source ? this.dayPatterns.get(source) : null;
+		if (!pattern) return null;
+		const days = this.dayLines.get(file, pattern);
+		if (!days || days.length === 0) return null;
+
+		// Each day's full date once per note, not once per link: date arithmetic per
+		// link was most of this feature's rebuild cost.
+		const dates = days.map((day: DayLine) => dateInWeek(noteDate, day.monthDay) ?? noteDate);
+		return (offset: number) => {
+			let date = noteDate;
+			for (let i = 0; i < days.length && days[i].offset <= offset; i++) date = dates[i];
+			return date;
+		};
+	}
+
+	/**
+	 * Give each person their groups' contact dates.
+	 *
+	 * A group note is tracked like a person, and seeing the group (a dinner, a
+	 * trip) means seeing everyone in it. The reverse doesn't hold: coffee with one
+	 * member isn't the group. Dates are copied from a snapshot taken before any
+	 * copying, so a group that is itself a member of another group passes on only
+	 * its own contact, and the result can't depend on the order people are visited.
+	 */
+	private propagateGroupContact(
+		people: Map<string, PersonRecord>,
+		linkMap: PersonLinkMap,
+	): number {
+		const memberGroups = new Map<string, string[]>();
+		const groupPaths = new Set<string>();
+		for (const [path, targets] of this.groupLinks) {
+			const resolved: string[] = [];
+			for (const target of targets) {
+				const groupPath = this.resolvePersonLink(target, path, linkMap);
+				if (groupPath && groupPath !== path && people.has(groupPath)) {
+					resolved.push(groupPath);
+					groupPaths.add(groupPath);
+				}
+			}
+			if (resolved.length > 0) memberGroups.set(path, resolved);
+		}
+
+		const snapshot = new Map<string, [string, string][]>();
+		for (const groupPath of groupPaths) {
+			snapshot.set(groupPath, [...(people.get(groupPath)?.sources ?? [])]);
+		}
+
+		let added = 0;
+		for (const [path, groups] of memberGroups) {
+			const member = people.get(path);
+			if (!member) continue;
+			for (const groupPath of groups) {
+				for (const [date, source] of snapshot.get(groupPath) ?? []) {
+					if (member.sources.has(date)) continue;
+					member.sources.set(date, source);
+					added++;
+				}
+			}
+		}
 		return added;
 	}
 
@@ -600,6 +731,11 @@ export class PrmEngine {
 			drifting: false,
 			openLoops: [],
 		};
+
+		if (fm[K.ignoreGroup] !== true) {
+			const groups = frontmatterLinkTargets(fm, K.groups);
+			if (groups.length > 0) this.groupLinks.set(file.path, groups);
+		}
 
 		const logged = coerceISODate(fm[K.lastContacted]);
 		if (logged) record.sources.set(logged, file.path);

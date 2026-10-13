@@ -128,7 +128,7 @@ export function formatDuration(days: number): string {
 	const d = Math.abs(Math.round(days));
 	if (d === 0) return "0d";
 	if (d < 14) return `${d}d`;
-	if (d < 60) return `${Math.round(d / 7)}w`;
+	if (d < 30) return `${Math.round(d / 7)}w`;
 	if (d < 730) return `${Math.round(d / 30)}mo`;
 	return `${(d / 365).toFixed(1)}y`;
 }

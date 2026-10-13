@@ -74,7 +74,7 @@ export default class PrmPlugin extends Plugin {
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
-		this.engine = new PrmEngine(this.app, this.settings);
+		this.engine = new PrmEngine(this.app, this.settings, () => this.reindex());
 		this.undo = new UndoManager(this.app, this.writes);
 
 		this.registerView(PRM_VIEW_TYPE, (leaf) => new PrmDashboardView(leaf, this));
@@ -177,6 +177,7 @@ export default class PrmPlugin extends Plugin {
 			"personTags",
 			"personExclusions",
 			"createdDateKeys",
+			"contactFrontmatterKeys",
 		] as const) {
 			if (!Array.isArray(this.settings[key])) {
 				this.settings[key] = [...DEFAULT_SETTINGS[key]];
@@ -811,6 +812,54 @@ export default class PrmPlugin extends Plugin {
 				if (tierId !== null) delete fm[FRONTMATTER_KEYS.paused];
 			});
 		});
+	}
+
+	/**
+	 * Change a tier's stored id, and every note's prm-tier that names it, so
+	 * nobody drops off the tier. Not undoable: undo would restore the notes but
+	 * not the settings, leaving everyone on an id that no longer exists.
+	 */
+	async renameTierId(oldId: string, newId: string): Promise<BulkResult> {
+		const s = this.settings;
+		const tier = s.tiers.find((t) => t.id === oldId);
+		if (!tier || s.tiers.some((t) => t.id === newId)) return { changed: 0, failed: [] };
+
+		tier.id = newId;
+		if (s.defaultTierId === oldId) s.defaultTierId = newId;
+		if (s.newPersonTier === oldId) s.newPersonTier = newId;
+		await this.saveSettings();
+
+		const paths = this.engine
+			.all()
+			.filter((r) => r.tierId === oldId)
+			.map((r) => r.path);
+		let changed = 0;
+		const failed: string[] = [];
+		for (const path of paths) {
+			const file = this.app.vault.getFileByPath(path);
+			if (!file) {
+				failed.push(path);
+				continue;
+			}
+			try {
+				await this.app.fileManager.processFrontMatter(file, (fm: MutableFrontmatter) => {
+					const value = fm[FRONTMATTER_KEYS.tier];
+					if (typeof value === "string" && value.trim() === oldId) fm[FRONTMATTER_KEYS.tier] = newId;
+				});
+				changed++;
+			} catch (e) {
+				console.error(`[prm] couldn't rename the tier in ${path}`, e);
+				failed.push(path);
+			}
+		}
+
+		const notes = describeCount(changed, "note", "notes");
+		new Notice(
+			failed.length > 0
+				? `Tier renamed to ${newId}; ${notes} updated, ${failed.length} failed (see console).`
+				: `Tier renamed to ${newId}; ${notes} updated.`,
+		);
+		return { changed, failed };
 	}
 
 	async bulkSnooze(paths: string[], until: string): Promise<BulkResult> {
