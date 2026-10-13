@@ -42,6 +42,8 @@ import {
 	readTagList,
 } from "./frontmatter";
 import { defaultPersonNote, renderTemplate, sanitizeNoteName } from "./templates";
+import { reminderBuckets, shouldShowReminder } from "./reminder";
+import { ReminderModal } from "./reminder-modal";
 
 interface WriteOptions {
 	silent?: boolean;
@@ -146,7 +148,7 @@ export default class PrmPlugin extends Plugin {
 		this.refreshStatusBar();
 		if (!this.firstBuildDone) {
 			this.firstBuildDone = true;
-			if (this.settings.notifyOnStartup) this.startupNotice();
+			if (this.settings.notifyOnStartup) this.dailyReminder();
 		}
 	}
 
@@ -307,6 +309,20 @@ export default class PrmPlugin extends Plugin {
 			id: "reach-out",
 			name: "Who should I reach out to?",
 			callback: () => this.startReachOutSession(),
+		});
+
+		this.addCommand({
+			id: "show-reminder",
+			name: "Show reach-out reminder",
+			callback: () => {
+				if (this.openReminder()) return;
+				const days = this.settings.reminderLookaheadDays;
+				new Notice(
+					days === 0
+						? "Nobody is overdue or due today."
+						: `Nobody is overdue or due within ${days} ${days === 1 ? "day" : "days"}.`,
+				);
+			},
 		});
 
 		this.addCommand({
@@ -1435,12 +1451,27 @@ export default class PrmPlugin extends Plugin {
 		);
 	}
 
-	private startupNotice(): void {
-		const stats = this.engine.stats();
-		if (stats.overdue === 0) return;
-		const queue = this.engine.queue(3);
-		const names = queue.map((r) => r.name).join(", ");
-		const more = stats.overdue > queue.length ? ` and ${stats.overdue - queue.length} more` : "";
-		new Notice(`Personal CRM: reach out to ${names}${more}.`, 8000);
+	/** On the first open of each day, the pop-up of who to reach out to. */
+	private dailyReminder(): void {
+		const today = todayISO();
+		if (!shouldShowReminder(this.settings.lastReminderDate, today)) return;
+		// A day with nobody due isn't spent: someone may still come due by a later open.
+		if (!this.openReminder()) return;
+		this.settings.lastReminderDate = today;
+		void this.saveSettings();
+	}
+
+	/** Open the reminder now; null, and nothing shown, when nobody is due in the window. */
+	openReminder(): ReminderModal | null {
+		const buckets = reminderBuckets(
+			this.engine.all(),
+			todayISO(),
+			this.settings.reminderLookaheadDays,
+			this.settings.tiers.map((t) => t.id),
+		);
+		if (buckets.total === 0) return null;
+		const modal = new ReminderModal(this, buckets);
+		modal.open();
+		return modal;
 	}
 }

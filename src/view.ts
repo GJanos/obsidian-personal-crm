@@ -1,20 +1,18 @@
-import { ItemView, Notice, TFile, WorkspaceLeaf, debounce, setIcon } from "obsidian";
+import { ItemView, Notice, WorkspaceLeaf, debounce, setIcon } from "obsidian";
 import type PrmPlugin from "./main";
-import { tierById } from "./settings";
-import type { PersonRecord, PersonStatus } from "./types";
-import { formatDuration, relativeToToday, todayISO } from "./dates";
+import type { PersonRecord } from "./types";
+import { todayISO } from "./dates";
 import {
 	type BulkAction,
 	BulkActionsModal,
 	FilterSheetModal,
 	LogContactModal,
 	PlacePickerModal,
-	PersonActionsModal,
 	SnoozeModal,
 	TagPickerModal,
 	TierChooserModal,
-	TierPickerModal,
 } from "./modals";
+import { renderPersonRow } from "./row";
 import { normalizeName } from "./contacts";
 
 export const PRM_VIEW_TYPE = "prm-dashboard";
@@ -39,44 +37,6 @@ const SORTS: { key: SortKey; label: string }[] = [
 	{ key: "cadence", label: "Cadence" },
 	{ key: "tags", label: "Tag" },
 ];
-
-const STATUS_LABEL: Record<PersonStatus, string> = {
-	overdue: "overdue",
-	"due-soon": "due soon",
-	ok: "on track",
-	snoozed: "snoozed",
-	paused: "paused",
-	untracked: "unclassified",
-};
-
-/**
- * One built SVG per icon name, cloned thereafter.
- *
- * Three icon buttons per row means setIcon() runs once per button — 9,000 times on a
- * 3,000-person list — and building an SVG is an order of magnitude dearer than
- * cloning one. Measured on 9,000 icons: 24.6 ms to build each, 12.6 ms to clone,
- * against 3.7 ms for the same number of plain divs. Lucide glyphs are drawn in
- * `currentColor` and don't vary by theme or state, so one is as good as another.
- */
-const iconTemplates = new Map<string, Element>();
-
-function appendIcon(el: HTMLElement, name: string): void {
-	let template = iconTemplates.get(name);
-	if (template === undefined) {
-		const probe = createDiv();
-		setIcon(probe, name);
-		const built = probe.firstElementChild;
-		// An unknown icon name inserts nothing; fall through to setIcon each time
-		// rather than caching a miss.
-		if (!built) {
-			setIcon(el, name);
-			return;
-		}
-		template = built;
-		iconTemplates.set(name, built);
-	}
-	el.appendChild(template.cloneNode(true));
-}
 
 /**
  * Rows built on first paint. Roughly two screens at a typical row height; the
@@ -557,7 +517,7 @@ export class PrmDashboardView extends ItemView {
 		const today = todayISO();
 		const end = Math.min(this.built + count, this.windowRecords.length);
 		for (let i = this.built; i < end; i++) {
-			this.renderRow(this.listEl, this.windowRecords[i], today);
+			this.renderRow(this.windowRecords[i], today);
 		}
 		this.built = end;
 
@@ -770,180 +730,17 @@ export class PrmDashboardView extends ItemView {
 		};
 	}
 
-	private renderRow(list: HTMLElement, record: PersonRecord, today: string): void {
-		const tier = tierById(this.plugin.settings, record.tierId);
-		const row = list.createDiv({ cls: `prm-row prm-row-${record.status}` });
-		row.dataset.prmPath = record.path;
-		row.toggleClass("prm-row-selected", this.selection.has(record.path));
-		const bar = row.createDiv({ cls: "prm-bar" });
-		const fill = bar.createDiv({ cls: "prm-bar-fill" });
-		fill.style.setProperty("--prm-progress", `${Math.round(record.cadenceProgress * 100)}%`);
-		if (tier) fill.style.setProperty("--prm-chip-color", tier.color);
-
-		const main = row.createDiv({ cls: "prm-row-main" });
-
-		const nameRow = main.createDiv({ cls: "prm-name-row" });
-
-		// Inside the name row rather than a leading column of the row: under
-		// ~700px the row stacks into a column, and a direct child there would
-		// stretch to full width. Sidebar leaves are routinely that narrow.
-		const check = nameRow.createEl("input", {
-			cls: "prm-select",
-			attr: { type: "checkbox", "aria-label": `Select ${record.name}` },
+	private renderRow(record: PersonRecord, today: string): void {
+		renderPersonRow(this.plugin, this.listEl, record, today, {
+			selection: {
+				has: (path) => this.selection.has(path),
+				onBoxClick: (path, evt, box) => this.onSelectClick(path, evt, box),
+				toggle: (path, shift) => this.applySelect(path, shift, !this.selection.has(path)),
+			},
+			// Clicking the active filter again clears it.
+			toggleQuery: (q) => this.setQuery(this.query === q ? "" : q),
+			showBirthday: this.filter === "birthdays",
 		});
-		check.checked = this.selection.has(record.path);
-		// Bind on click, not change: only a click carries the shift modifier.
-		check.onclick = (evt) => this.onSelectClick(record.path, evt, check);
-
-		const link = nameRow.createEl("a", { cls: "prm-name", text: record.name });
-		link.onclick = (evt) => {
-			evt.preventDefault();
-			void this.plugin.openPerson(record, evt.metaKey || evt.ctrlKey);
-		};
-
-		// A button, not a <select>: one dropdown per row with an option per tier was
-		// nearly half of all render cost.
-		const tierBtn = nameRow.createEl("button", {
-			cls: tier ? "prm-chip prm-chip-button" : "prm-chip prm-chip-button prm-chip-muted",
-			text: record.tierMissing
-				? `unknown tier: ${record.tierId}`
-				: tier
-					? tier.label
-					: "unclassified",
-		});
-		if (tier) tierBtn.style.setProperty("--prm-chip-color", tier.color);
-		if (record.tierMissing) tierBtn.addClass("prm-chip-overdue");
-		tierBtn.setAttribute("aria-label", `Change cadence for ${record.name}`);
-		tierBtn.onclick = () => new TierPickerModal(this.plugin, record).open();
-
-		if (record.status === "overdue") {
-			nameRow.createSpan({
-				cls: "prm-chip prm-chip-overdue",
-				text:
-					record.overdueDays === 0
-						? "due today"
-						: `overdue ${formatDuration(record.overdueDays)}`,
-			});
-		} else if (record.status === "due-soon") {
-			nameRow.createSpan({
-				cls: "prm-chip prm-chip-soon",
-				text: `due in ${formatDuration(record.overdueDays)}`,
-			});
-		} else if (record.status === "snoozed" && record.snoozeUntil) {
-			nameRow.createSpan({
-				cls: "prm-chip prm-chip-muted",
-				text: `snoozed to ${record.snoozeUntil}`,
-			});
-		}
-
-		if (record.drifting) {
-			const chip = nameRow.createSpan({ cls: "prm-chip prm-chip-drift", text: "drifting" });
-			chip.setAttribute(
-				"aria-label",
-				record.typicalGapDays === null
-					? "Quieter than usual"
-					: `You normally talk every ${formatDuration(record.typicalGapDays)}`,
-			);
-		}
-
-		if (record.openLoops.length > 0) {
-			nameRow.createSpan({
-				cls: "prm-chip prm-chip-loop",
-				text:
-					record.openLoops.length === 1
-						? "1 follow-up"
-						: `${record.openLoops.length} follow-ups`,
-			});
-		}
-
-		const meta = main.createDiv({ cls: "prm-row-meta" });
-		if (record.lastContact) {
-			const last = meta.createEl("a", {
-				cls: "prm-meta-link",
-				text: `last ${relativeToToday(record.lastContact, today)}`,
-			});
-			last.onclick = (evt) => {
-				evt.preventDefault();
-				void this.plugin.openInteraction(record, record.lastContact as string);
-			};
-		} else if (record.baselineSource === "filesystem") {
-			// Urgency derived from a file timestamp shouldn't look like real data:
-			// sync and git clone both reset it.
-			meta.createSpan({ cls: "prm-muted", text: "no contact history (estimated)" });
-		} else {
-			meta.createSpan({ text: "never in contact" });
-		}
-
-		if (record.cadenceDays !== null) {
-			meta.createSpan({ text: `every ${formatDuration(record.cadenceDays)}` });
-		}
-		if (record.mentionCount > 0) {
-			meta.createSpan({ text: `${record.mentionCount}× mentioned` });
-		}
-		if (this.filter === "birthdays" && record.daysUntilBirthday !== null) {
-			meta.createSpan({
-				cls: "prm-birthday",
-				text:
-					record.daysUntilBirthday === 0
-						? "birthday today"
-						: `birthday in ${formatDuration(record.daysUntilBirthday)}`,
-			});
-		}
-		if (record.relationship) meta.createSpan({ text: record.relationship });
-
-		if (record.location) {
-			const place = meta.createEl("a", { cls: "prm-place", text: record.location });
-			place.setAttribute("aria-label", `Show everyone in ${record.location}`);
-			place.onclick = (evt) => {
-				evt.preventDefault();
-				this.setQuery(this.query === `@${record.location}` ? "" : `@${record.location}`);
-			};
-		}
-
-		for (const tag of record.tags) {
-			const chip = meta.createEl("a", { cls: "prm-tag", text: `#${tag}` });
-			chip.setAttribute("aria-label", `Filter by ${tag}`);
-			chip.onclick = (evt) => {
-				evt.preventDefault();
-				// Clicking a tag filters to it; clicking the same one again clears.
-				this.setQuery(this.query === `#${tag}` ? "" : `#${tag}`);
-			};
-		}
-
-		const actions = row.createDiv({ cls: "prm-row-actions" });
-
-		this.iconButton(actions, "check", "Log contact today", async () => {
-			const file = this.app.vault.getAbstractFileByPath(record.path);
-			if (file instanceof TFile) await this.plugin.logContact(file, todayISO());
-		});
-
-		this.iconButton(actions, "pencil", "Log contact with details…", () => {
-			new LogContactModal(this.plugin, record).open();
-		});
-
-		this.iconButton(actions, "alarm-clock", "Snooze", () => {
-			new SnoozeModal(this.plugin, record).open();
-		});
-
-		row.setAttribute("aria-label", `${record.name} — ${STATUS_LABEL[record.status]}`);
-
-		row.onclick = (evt) => {
-			// Links, buttons and the checkbox own their own clicks; the row only
-			// handles what's left, so nothing here shadows an existing control.
-			if ((evt.target as HTMLElement).closest("a, button, input, textarea, select")) return;
-
-			// Cmd/Ctrl is the conventional multi-select modifier, and shift extends
-			// a range — matching the checkboxes and every file list users know.
-			if (evt.metaKey || evt.ctrlKey) {
-				this.applySelect(record.path, false, !this.selection.has(record.path));
-				return;
-			}
-			if (evt.shiftKey) {
-				this.applySelect(record.path, true, !this.selection.has(record.path));
-				return;
-			}
-			new PersonActionsModal(this.plugin, record).open();
-		};
 	}
 
 	/**
@@ -999,18 +796,6 @@ export class PrmDashboardView extends ItemView {
 			const box = rows[i].querySelector<HTMLInputElement>(".prm-select");
 			if (box && box.checked !== on) box.checked = on;
 		}
-	}
-
-	private iconButton(
-		parent: HTMLElement,
-		icon: string,
-		tooltip: string,
-		onClick: () => void | Promise<void>,
-	): void {
-		const btn = parent.createEl("button", { cls: "clickable-icon prm-icon-btn" });
-		appendIcon(btn, icon);
-		btn.setAttribute("aria-label", tooltip);
-		btn.onclick = () => void onClick();
 	}
 
 	// ------------------------------------------------------------------ selection

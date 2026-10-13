@@ -105,6 +105,10 @@ export interface PrmSettings {
 
 	showStatusBar: boolean;
 	notifyOnStartup: boolean;
+	/** Days after today the startup reminder covers; 0 is overdue and today only. */
+	reminderLookaheadDays: number;
+	/** The day the startup reminder last appeared, so it shows once a day. */
+	lastReminderDate: string;
 	nextUpCount: number;
 
 	/** Also append a human-readable line under a heading in the person's note. */
@@ -168,6 +172,8 @@ export const DEFAULT_SETTINGS: PrmSettings = {
 
 	showStatusBar: true,
 	notifyOnStartup: true,
+	reminderLookaheadDays: 3,
+	lastReminderDate: "",
 	nextUpCount: 5,
 
 	logToBody: true,
@@ -1052,9 +1058,21 @@ export class PrmSettingTab extends PluginSettingTab {
 					control: { type: "toggle", key: "showStatusBar" },
 				},
 				{
-					name: "Notify when Obsidian starts",
-					desc: "A quiet nudge listing who's overdue.",
+					name: "Remind me when Obsidian starts",
+					desc: "On the first open of each day, a pop-up of who's overdue and who's due soon.",
 					control: { type: "toggle", key: "notifyOnStartup" },
+				},
+				{
+					name: "Days to look ahead",
+					desc: "How many days after today the reminder covers.",
+					control: {
+						type: "slider",
+						key: "reminderLookaheadDays",
+						min: 0,
+						max: 14,
+						step: 1,
+						displayFormat: (v: number) => (v === 0 ? "today only" : v === 1 ? "1 day" : `${v} days`),
+					},
 				},
 				{
 					name: "People per reach-out session",

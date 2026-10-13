@@ -183,7 +183,7 @@ function makeStub(notices) {
     },
     ItemView: class { constructor(l) { this.leaf = l; this.contentEl = new Stub("div"); } register() {} },
     Modal: class {
-      constructor(a) { this.app = a; this.modalEl = new Stub("div"); this.contentEl = new Stub("div"); this.titleEl = new Stub("div"); this.scope = { register: (m, k, fn) => { (this.__keys ??= {})[k] = fn; } }; }
+      constructor(a) { this.app = a; this.containerEl = new Stub("div"); this.modalEl = new Stub("div"); this.contentEl = new Stub("div"); this.titleEl = new Stub("div"); this.scope = { register: (m, k, fn) => { (this.__keys ??= {})[k] = fn; } }; }
       open() { this.onOpen?.(); } close() { this.onClose?.(); }
     },
     SuggestModal: class { constructor(a) { this.app = a; } setPlaceholder() {} open() {} close() {} },

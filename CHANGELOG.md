@@ -20,6 +20,11 @@ All notable changes to Personal CRM. Versions follow
   group note, unless `prm-ignore-group: true`. A group is tracked like a person, with
   its own tier. It goes one way: a member's contact doesn't count for the group, and
   a group in a group passes on only its own contact.
+- **A daily reminder pop-up** replaces the startup notice. On the first open of each
+  day it lists who's overdue, then who falls due today, tomorrow and each day after up
+  to *Days to look ahead* (3 by default), as the dashboard's own rows with their
+  actions. It stays until closed with X or Escape; someone handled from it is dimmed in
+  place rather than removed. *Show reach-out reminder* opens it any time.
 
 ### Fixed
 

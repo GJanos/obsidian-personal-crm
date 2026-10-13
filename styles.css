@@ -402,6 +402,47 @@
 	width: 90vw;
 }
 
+/* The daily reminder: the dashboard's rows, grouped by the day they fall due. */
+.prm-reminder-modal {
+	max-width: 44rem;
+	width: 90vw;
+}
+
+.prm-reminder-summary {
+	color: var(--text-muted);
+	margin-bottom: 0.75rem;
+}
+
+.prm-reminder-section + .prm-reminder-section {
+	margin-top: 1rem;
+}
+
+.prm-reminder-heading {
+	font-size: var(--font-ui-smaller);
+	font-weight: 600;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+	padding-bottom: 0.25rem;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.prm-reminder-nobody {
+	padding: 0.4rem 0.5rem;
+	font-size: var(--font-ui-smaller);
+}
+
+/* Handled from the reminder: kept in place, so nothing moves under the pointer. */
+.prm-row-done {
+	opacity: 0.5;
+}
+
+.prm-reminder-footer {
+	display: flex;
+	justify-content: flex-end;
+	margin-top: 1rem;
+}
+
 .prm-reachout-header {
 	border-bottom: 1px solid var(--background-modifier-border);
 	padding-bottom: 0.6rem;
@@ -1296,7 +1337,8 @@ a.prm-place:hover {
 		flex-wrap: nowrap;
 	}
 
-	.prm-reachout-modal {
+	.prm-reachout-modal,
+	.prm-reminder-modal {
 		width: 96vw;
 	}
 }
