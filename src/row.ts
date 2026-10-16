@@ -2,7 +2,7 @@ import { TFile, setIcon } from "obsidian";
 import type PrmPlugin from "./main";
 import { tierById } from "./settings";
 import type { PersonRecord, PersonStatus } from "./types";
-import { formatDuration, relativeToToday, todayISO } from "./dates";
+import { formatCadence, formatDuration, relativeToToday, todayISO } from "./dates";
 import { LogContactModal, PersonActionsModal, SnoozeModal, TierPickerModal } from "./modals";
 
 /**
@@ -29,7 +29,7 @@ export interface RowHooks {
 	 * past the due-soon window; on the dashboard an on-track row has no chip.
 	 */
 	showDueWhenOk?: boolean;
-	/** One of the row's log or snooze buttons was used. */
+	/** A log or snooze from the row's buttons went through; a dialog cancelled doesn't count. */
 	onAction?: (record: PersonRecord) => void;
 }
 
@@ -202,7 +202,7 @@ export function renderPersonRow(
 	}
 
 	if (record.cadenceDays !== null) {
-		meta.createSpan({ text: `every ${formatDuration(record.cadenceDays)}` });
+		meta.createSpan({ text: `every ${formatCadence(record.cadenceDays)}` });
 	}
 	if (record.mentionCount > 0) {
 		meta.createSpan({ text: `${record.mentionCount}× mentioned` });
@@ -254,13 +254,11 @@ export function renderPersonRow(
 	});
 
 	iconButton(actions, "pencil", "Log contact with details…", () => {
-		hooks.onAction?.(record);
-		new LogContactModal(plugin, record).open();
+		new LogContactModal(plugin, record, undefined, () => hooks.onAction?.(record)).open();
 	});
 
 	iconButton(actions, "alarm-clock", "Snooze", () => {
-		hooks.onAction?.(record);
-		new SnoozeModal(plugin, record).open();
+		new SnoozeModal(plugin, record, undefined, false, () => hooks.onAction?.(record)).open();
 	});
 
 	row.setAttribute("aria-label", `${record.name} — ${STATUS_LABEL[record.status]}`);

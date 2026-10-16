@@ -29,6 +29,18 @@ All notable changes to Personal CRM. Versions follow
 
 ### Fixed
 
+- **A cadence reads as set.** A 45-day tier showed as "every 2mo"; it now reads "every
+  45d". Whole weeks, months and years keep their unit. Rounded durations (lateness,
+  usual gaps) stay in weeks up to two months, so 45 days is "6w".
+- **`prm-ignore-journal` holds against groups.** A member who ignores the journal no
+  longer takes their group's journal mentions; a date logged in the group note still
+  counts.
+- **Cancelling a dialog from the reminder isn't "done".** Snooze or *Log contact with
+  details…* opened and then cancelled marked the row done as soon as the due date moved
+  for any other reason.
+- **No reminder stuck on screen after a reload.** Disabling or reloading the plugin
+  before week notes were read let the startup reminder open afterwards, with nothing
+  left to close it.
 - The test stub reported links written in frontmatter as body links, which real
   Obsidian never does, so frontmatter-only behaviour could not be tested.
 

@@ -128,9 +128,23 @@ export function formatDuration(days: number): string {
 	const d = Math.abs(Math.round(days));
 	if (d === 0) return "0d";
 	if (d < 14) return `${d}d`;
-	if (d < 30) return `${Math.round(d / 7)}w`;
+	// Weeks until two months: 45 days in months is 1.5, which rounds to a misleading "2mo".
+	if (d < 60) return `${Math.round(d / 7)}w`;
 	if (d < 730) return `${Math.round(d / 30)}mo`;
 	return `${(d / 365).toFixed(1)}y`;
+}
+
+/**
+ * A cadence, exactly as set: whole years, months or weeks by their unit, anything
+ * else in days. "every 45d", never a rounded "every 2mo".
+ */
+export function formatCadence(days: number): string {
+	if (!Number.isFinite(days)) return "?";
+	const d = Math.abs(Math.round(days));
+	if (d > 0 && d % 365 === 0) return `${d / 365}y`;
+	if (d > 0 && d % 30 === 0) return `${d / 30}mo`;
+	if (d > 0 && d % 7 === 0) return `${d / 7}w`;
+	return `${d}d`;
 }
 
 /** Human phrasing relative to today, e.g. "today", "12d ago", "in 3w". */

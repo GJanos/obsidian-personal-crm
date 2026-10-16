@@ -564,6 +564,9 @@ export class PrmEngine {
 	 * member isn't the group. Dates are copied from a snapshot taken before any
 	 * copying, so a group that is itself a member of another group passes on only
 	 * its own contact, and the result can't depend on the order people are visited.
+	 *
+	 * A member with `prm-ignore-journal` takes only what was logged in the group's
+	 * own note: the group's journal mentions are journal contact all the same.
 	 */
 	private propagateGroupContact(
 		people: Map<string, PersonRecord>,
@@ -594,6 +597,7 @@ export class PrmEngine {
 			if (!member) continue;
 			for (const groupPath of groups) {
 				for (const [date, source] of snapshot.get(groupPath) ?? []) {
+					if (member.ignoreJournal && source !== groupPath) continue;
 					if (member.sources.has(date)) continue;
 					member.sources.set(date, source);
 					added++;

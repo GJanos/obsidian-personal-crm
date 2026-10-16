@@ -24,7 +24,7 @@ import { ContactImportModal } from "./import-modal";
 import { FileSnapshot, UndoEntry, UndoManager , type UndoResult } from "./undo";
 import { WriteQueue } from "./writes";
 import { detectJournalSources, detectPeopleFolder } from "./detect";
-import { formatDuration, isISODate, todayISO } from "./dates";
+import { formatCadence, formatDuration, isISODate, todayISO } from "./dates";
 import type { LoopRef, PersonRecord } from "./types";
 import { appendFollowUp, appendUnder, hasHeading, setTask } from "./loops";
 import { findHeading, shallowestHeadingLevel } from "./markdown";
@@ -68,6 +68,11 @@ export default class PrmPlugin extends Plugin {
 	private statusTextEl: HTMLElement | null = null;
 	private firstBuildDone = false;
 	private reminderPanel: ReminderPanel | null = null;
+	/**
+	 * Set by `onunload`. The startup reminder waits on week-note day lines, which can
+	 * settle after a reload or disable; a panel opened then has nobody left to close it.
+	 */
+	private unloaded = false;
 	/**
 	 * False until the workspace is ready. Obsidian replays `create` for every file
 	 * in the vault while it loads, and writing into notes during that is both
@@ -128,6 +133,7 @@ export default class PrmPlugin extends Plugin {
 	}
 
 	onunload(): void {
+		this.unloaded = true;
 		// The panel lives on the document body, outside anything Obsidian tears down.
 		this.reminderPanel?.close();
 
@@ -1138,7 +1144,7 @@ export default class PrmPlugin extends Plugin {
 			});
 			this.afterWrite(
 				tier
-					? `${file.basename}: every ${formatDuration(tier.cadenceDays)}.`
+					? `${file.basename}: every ${formatCadence(tier.cadenceDays)}.`
 					: `${file.basename} is no longer tracked.`,
 				entry,
 				opts,
@@ -1475,7 +1481,7 @@ export default class PrmPlugin extends Plugin {
 			this.settings.reminderLookaheadDays,
 			this.settings.tiers.map((t) => t.id),
 		);
-		if (buckets.total === 0) return null;
+		if (this.unloaded || buckets.total === 0) return null;
 		this.reminderPanel?.close();
 		const panel = new ReminderPanel(this, buckets, () => {
 			if (this.reminderPanel === panel) this.reminderPanel = null;

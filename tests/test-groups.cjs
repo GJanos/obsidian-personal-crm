@@ -140,6 +140,20 @@ async function boot(build, settings = {}) {
       assert.deepStrictEqual(plugin.engine.get("People/Alex.md").contactDates, []));
   }
 
+  console.log("\nprm-ignore-journal holds against group mentions");
+  {
+    const { plugin } = await boot((v) => {
+      v.addFile("People/Groups/Climbers.md", "---\ntags:\n  - people/group\nprm-tier: close\nprm-last-contacted: 2026-04-02\n---\n");
+      v.addFile("People/Alex.md", person("groups:\n  - \"[[Climbers]]\"\nprm-ignore-journal: true\n"));
+      v.addFile("Daily/2026-04-01.md", "bouldering with [[Climbers]]\n");
+    });
+    const alex = plugin.engine.get("People/Alex.md");
+    check("a journal mention of the group doesn't reach a member who ignores the journal", () =>
+      assert.ok(!alex.contactDates.includes("2026-04-01"), JSON.stringify(alex.contactDates)));
+    check("a date logged in the group note itself still does", () =>
+      assert.deepStrictEqual(alex.contactDates, ["2026-04-02"]));
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
 })();

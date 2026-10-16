@@ -37,6 +37,7 @@ class Stub {
   removeClass(c) { this.classes.delete(c); return this; }
   toggleClass(c, on) { if (on) this.classes.add(c); else this.classes.delete(c); return this; }
   hasClass(c) { return this.classes.has(c); }
+  focus() {}
   empty() { this.children = []; }
   // Real DOM moves a node when it's already parented; the sentinel relies on that to
   // stay last as rows are appended.
@@ -184,9 +185,10 @@ function makeStub(notices) {
     ItemView: class { constructor(l) { this.leaf = l; this.contentEl = new Stub("div"); } register() {} },
     Modal: class {
       constructor(a) { this.app = a; this.containerEl = new Stub("div"); this.modalEl = new Stub("div"); this.contentEl = new Stub("div"); this.titleEl = new Stub("div"); this.scope = { register: (m, k, fn) => { (this.__keys ??= {})[k] = fn; } }; }
-      open() { this.onOpen?.(); } close() { this.onClose?.(); }
+      // The last modal opened, so a test can cancel or answer the dialog a button opened.
+      open() { globalThis.__lastModal = this; this.onOpen?.(); } close() { this.onClose?.(); }
     },
-    SuggestModal: class { constructor(a) { this.app = a; } setPlaceholder() {} open() {} close() {} },
+    SuggestModal: class { constructor(a) { this.app = a; } setPlaceholder() {} open() { globalThis.__lastModal = this; } close() { this.onClose?.(); } },
     FuzzySuggestModal: class { constructor(a) { this.app = a; } setPlaceholder() {} open() {} close() {} },
     AbstractInputSuggest: class { constructor(a, i) { this.app = a; this.inputEl = i; } close() {} },
     Component: class { load() { this.__loaded = true; } unload() { this.__loaded = false; } },
@@ -250,6 +252,7 @@ function makeStub(notices) {
     debounce: (fn) => {
       const f = (...a) => fn(...a);
       f.cancel = () => {};
+      f.run = () => {};
       return f;
     },
     moment,

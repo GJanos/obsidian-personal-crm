@@ -22,6 +22,7 @@ const rec = (name, overdueDays, extra = {}) => ({
   dueDate: "2026-01-01", overdueDays, ...extra,
 });
 const names = (list) => list.map((r) => r.name);
+const lastModal = () => globalThis.__lastModal;
 
 const day = 86400000;
 const iso = (d) => new Date(d).toISOString().slice(0, 10);
@@ -189,6 +190,56 @@ function seen(v, name, n) {
     const { plugin, opened } = await boot((v) => seen(v, "Akos", 20), { lastReminderDate: iso(Date.now()) });
     plugin.__cmds.find((c) => c.id === "show-reminder").callback();
     check("the command opens it regardless of the day gate", () => assert.strictEqual(opened.length, 1));
+  }
+
+  console.log("\nReview fixes");
+  {
+    // Disabled (or reloaded) before the week notes' day lines are read: the startup
+    // reminder must not open afterwards, on a plugin that can no longer close it.
+    const v = makeVault();
+    seen(v, "Akos", 20);
+    const p = new PluginClass(v.app, { id: "personal-crm" });
+    p.__data = { configured: true, notifyOnStartup: true, showStatusBar: false,
+      personFolders: ["People"], journalSources: [{ folder: "Daily", format: "YYYY-MM-DD" }] };
+    const panels = () => activeDocument.body.children.filter((c) => c.classes.has("prm-reminder-panel")).length;
+    const before = panels();
+    await p.onload();
+    p.onunload();
+    await new Promise((r) => setTimeout(r, 20));
+    check("unloaded during startup: no reminder is left on the page", () =>
+      assert.strictEqual(panels(), before));
+  }
+  {
+    const { plugin, opened, app } = await boot((v) => seen(v, "Akos", 20));
+    const panel = opened[0];
+    const row = () => panel.el.querySelectorAll(".prm-row").find((r) => r.dataset.prmPath === "People/Akos.md");
+    const button = (label) => row().querySelectorAll("button").find((b) => b.attrs["aria-label"] === label);
+
+    button("Snooze").onclick();
+    lastModal().close();
+    // Logged elsewhere afterwards: the due date moves, but nothing was done here.
+    await plugin.logContact(app.vault.getAbstractFileByPath("People/Akos.md"), iso(Date.now()));
+    plugin.engine.rebuild();
+    check("Snooze opened and cancelled doesn't mark the row done", () =>
+      assert.strictEqual(row().classes.has("prm-row-done"), false));
+
+    button("Log contact with details…").onclick();
+    lastModal().close();
+    plugin.engine.rebuild();
+    check("nor does the details dialog, cancelled", () =>
+      assert.strictEqual(row().classes.has("prm-row-done"), false));
+    panel.close();
+  }
+  {
+    const { plugin, opened } = await boot((v) => seen(v, "Akos", 20));
+    const panel = opened[0];
+    const row = () => panel.el.querySelectorAll(".prm-row").find((r) => r.dataset.prmPath === "People/Akos.md");
+    row().querySelectorAll("button").find((b) => b.attrs["aria-label"] === "Snooze").onclick();
+    lastModal().onChooseSuggestion({ label: "1 week", days: 7 });
+    await new Promise((r) => setTimeout(r, 10));
+    plugin.engine.rebuild();
+    check("a snooze actually chosen still marks it", () => assert.ok(row().classes.has("prm-row-done")));
+    panel.close();
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

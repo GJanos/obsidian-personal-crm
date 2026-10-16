@@ -24,6 +24,7 @@ const PluginClass = harness.loadPlugin();
 // Comments are stripped first: this file's rules carry long explanatory comments, and
 // a `}` inside one of them truncated every rule body the naive scan below returned.
 const CSS = fs.readFileSync(path.join(harness.repoRoot, "styles.css"), "utf8")
+  .replace(/\r\n/g, "\n") // a Windows checkout has CRLF; the checks match on "\n"
   .replace(/\/\*[\s\S]*?\*\//g, "");
 
 let passed = 0, failed = 0;

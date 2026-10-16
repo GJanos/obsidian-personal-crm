@@ -14,7 +14,7 @@ import {
 import type PrmPlugin from "./main";
 import { tierById } from "./settings";
 import type { LoopRef, PersonRecord, Tier } from "./types";
-import { addDays, formatDuration, isISODate, relativeToToday, todayISO } from "./dates";
+import { addDays, formatCadence, formatDuration, isISODate, relativeToToday, todayISO } from "./dates";
 import { trailingMonths } from "./calendar";
 import { loopFile, readLoops } from "./loops";
 
@@ -273,7 +273,7 @@ export class TierPickerModal extends SuggestModal<TierChoice> {
 	private label(choice: TierChoice): string {
 		switch (choice.kind) {
 			case "tier":
-				return `${choice.tier.label} — every ${formatDuration(choice.tier.cadenceDays)}`;
+				return `${choice.tier.label} — every ${formatCadence(choice.tier.cadenceDays)}`;
 			case "cadence":
 				return "Custom cadence…";
 			case "clear":
@@ -292,7 +292,7 @@ export class TierPickerModal extends SuggestModal<TierChoice> {
 			dot.style.setProperty("--prm-chip-color", choice.tier.color);
 			el.createSpan({ text: choice.tier.label, cls: "prm-suggestion-title" });
 			el.createSpan({
-				text: `every ${formatDuration(choice.tier.cadenceDays)}`,
+				text: `every ${formatCadence(choice.tier.cadenceDays)}`,
 				cls: "prm-suggestion-aux",
 			});
 			return;
@@ -535,7 +535,7 @@ export class TierChooserModal extends SuggestModal<BulkTier> {
 		dot.style.setProperty("--prm-chip-color", choice.tier.color);
 		el.createSpan({ text: choice.tier.label, cls: "prm-suggestion-title" });
 		el.createSpan({
-			text: `every ${formatDuration(choice.tier.cadenceDays)}`,
+			text: `every ${formatCadence(choice.tier.cadenceDays)}`,
 			cls: "prm-suggestion-aux",
 		});
 	}
@@ -696,6 +696,8 @@ export class SnoozeModal extends SuggestModal<SnoozeChoice> {
 		private onDone?: (chosen: boolean, until?: string) => void,
 		/** When set, the modal reports the choice instead of writing it itself. */
 		private reportOnly = false,
+		/** Runs once a choice is made, before it's written; never on Escape. */
+		private onChosen?: () => void,
 	) {
 		super(plugin.app);
 		this.setPlaceholder(`Hide ${record.name} from the queue for…`);
@@ -717,6 +719,7 @@ export class SnoozeModal extends SuggestModal<SnoozeChoice> {
 
 	onChooseSuggestion(choice: SnoozeChoice): void {
 		this.chose = true;
+		this.onChosen?.();
 		void this.apply(choice);
 	}
 
@@ -792,7 +795,7 @@ export class CreatePersonModal extends PrmModal {
 			.addDropdown((d) => {
 				d.addOption("", "Not yet — leave unclassified");
 				for (const tier of this.plugin.settings.tiers) {
-					d.addOption(tier.id, `${tier.label} — every ${formatDuration(tier.cadenceDays)}`);
+					d.addOption(tier.id, `${tier.label} — every ${formatCadence(tier.cadenceDays)}`);
 				}
 				d.setValue(this.tierId).onChange((v) => (this.tierId = v));
 				return d;
@@ -938,6 +941,8 @@ export class LogContactModal extends PrmModal {
 		private plugin: PrmPlugin,
 		private record: PersonRecord | null,
 		private bulk?: { count: number; onSubmit: (date: string, note?: string) => void },
+		/** Runs when the log is submitted, before it's written; never on Cancel. */
+		private onSubmitted?: () => void,
 	) {
 		super(plugin.app);
 	}
@@ -1001,6 +1006,7 @@ export class LogContactModal extends PrmModal {
 		}
 		if (!this.record) return;
 		const file = this.app.vault.getAbstractFileByPath(this.record.path);
+		this.onSubmitted?.();
 		this.close();
 		if (file instanceof TFile) {
 			await this.plugin.logContact(file, this.date, this.note.trim() || undefined);
@@ -1797,7 +1803,7 @@ export class TriageModal extends PrmModal {
 				btn.createSpan({ cls: "prm-key", text: String(i + 1) });
 			}
 			btn.createSpan({ text: tier.label });
-			btn.createSpan({ cls: "prm-muted", text: formatDuration(tier.cadenceDays) });
+			btn.createSpan({ cls: "prm-muted", text: formatCadence(tier.cadenceDays) });
 			btn.onclick = () => void this.assign(tier.id);
 		});
 

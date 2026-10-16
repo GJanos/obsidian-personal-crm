@@ -12,7 +12,7 @@ import {
 import type PrmPlugin from "./main";
 import type { Tier } from "./types";
 import type { JournalSource } from "./journal";
-import { formatDuration } from "./dates";
+import { formatCadence } from "./dates";
 import { ConfirmModal } from "./modals";
 
 export interface PrmSettings {
@@ -861,7 +861,7 @@ export class PrmSettingTab extends PluginSettingTab {
 			type: "page" as const,
 			name: tier.label,
 			desc: `Stored as prm-tier: ${tier.id}`,
-			displayValue: () => `every ${formatDuration(tier.cadenceDays)}`,
+			displayValue: () => `every ${formatCadence(tier.cadenceDays)}`,
 			items: [
 				{
 					name: "Label",
