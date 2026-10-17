@@ -2,7 +2,7 @@ import tseslint from "typescript-eslint";
 import obsidianmd from "eslint-plugin-obsidianmd";
 
 export default tseslint.config(
-  { ignores: ["main.js", "dist/**", "node_modules/**", "*.mjs"] },
+  { ignores: ["main.js", "dist/**", "node_modules/**", "*.mjs", "src/shared/**"] },
   ...tseslint.configs.recommendedTypeChecked,
   ...(obsidianmd.configs?.recommended ?? []),
   {

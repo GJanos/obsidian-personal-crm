@@ -17,6 +17,7 @@ import type { LoopRef, PersonRecord, Tier } from "./types";
 import { addDays, formatCadence, formatDuration, isISODate, relativeToToday, todayISO } from "./dates";
 import { trailingMonths } from "./calendar";
 import { loopFile, readLoops } from "./loops";
+import { attachLinkSuggest } from "./shared/link-suggest.js";
 
 /**
  * Reduce a person note to the part worth reading in a preview.
@@ -163,6 +164,8 @@ interface NoteEditorOptions {
 	onChange: (value: string) => void;
 	/** Cmd/Ctrl+Enter, so a long note can be committed without reaching for the mouse. */
 	onSubmit?: () => void;
+	/** With the app, [[ in the box suggests notes to link. */
+	app?: App;
 }
 
 /** A full-width, resizable note box. */
@@ -177,6 +180,7 @@ function noteEditor(parent: HTMLElement, opts: NoteEditorOptions): HTMLTextAreaE
 	});
 	input.value = opts.value;
 	input.addEventListener("input", () => opts.onChange(input.value));
+	if (opts.app) attachLinkSuggest(opts.app, input);
 	input.addEventListener("keydown", (evt) => {
 		if (opts.onSubmit && evt.key === "Enter" && (evt.metaKey || evt.ctrlKey)) {
 			evt.preventDefault();
@@ -979,6 +983,7 @@ export class LogContactModal extends PrmModal {
 			placeholder: "What did you talk about?",
 			value: "",
 			onChange: (v) => (this.note = v),
+			app: this.app,
 			onSubmit: () => void this.submit(),
 		});
 		window.setTimeout(() => noteField.focus(), 0);
@@ -1183,6 +1188,7 @@ export class PersonActionsModal extends PrmModal {
 			placeholder: "What did you talk about?",
 			value: this.note,
 			onChange: (v) => (this.note = v),
+			app: this.app,
 			onSubmit: () => void this.logIt(),
 		});
 		// Only on the first draw. A redraw restores whatever had focus instead, via
@@ -1322,6 +1328,7 @@ export class PersonActionsModal extends PrmModal {
 		});
 		input.value = this.draft;
 		input.addEventListener("input", () => (this.draft = input.value));
+		attachLinkSuggest(this.app, input);
 		const submit = async () => {
 			const text = input.value.trim();
 			if (text.length === 0) return;
@@ -1589,6 +1596,7 @@ export class ReachOutModal extends PrmModal {
 			value: this.drafts.get(record.path) ?? "",
 			onChange: (v) => this.drafts.set(record.path, v),
 			onSubmit: () => void logIt(),
+			app: this.app,
 		});
 
 		const actions = contentEl.createDiv({ cls: "prm-reachout-actions" });
