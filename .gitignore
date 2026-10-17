@@ -17,3 +17,6 @@ tests/.build/
 tests/ui/*.bundle.js
 tests/ui/styles.css
 tests/ui/.shot-*.png
+
+# plugin-tools: what was last deployed into the vault
+.deploy-state.json

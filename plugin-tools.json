@@ -1,0 +1,8 @@
+{
+  "map": [
+    ["main.js", ".obsidian/plugins/personal-crm/main.js"],
+    ["styles.css", ".obsidian/plugins/personal-crm/styles.css"],
+    ["manifest.json", ".obsidian/plugins/personal-crm/manifest.json"]
+  ],
+  "fork": { "branch": "main", "upstream": "upstream/main" }
+}
