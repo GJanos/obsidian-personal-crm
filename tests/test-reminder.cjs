@@ -27,6 +27,11 @@ const lastModal = () => globalThis.__lastModal;
 const day = 86400000;
 const iso = (d) => new Date(d).toISOString().slice(0, 10);
 const ago = (n) => iso(Date.now() - n * day);
+/** Today by the local clock, as the plugin's todayISO has it. */
+const todayLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 
 async function boot(build, settings = {}) {
   const v = makeVault();
@@ -35,6 +40,8 @@ async function boot(build, settings = {}) {
   p.__data = Object.assign({ configured: true, notifyOnStartup: true, showStatusBar: false,
     personFolders: ["People"], journalSources: [{ folder: "Daily", format: "YYYY-MM-DD" }] }, settings);
   const opened = [];
+  p.domEvents = [];
+  p.registerDomEvent = (target, type, handler) => p.domEvents.push({ target, type, handler });
   const real = p.openReminder.bind(p);
   p.openReminder = () => { const m = real(); if (m) opened.push(m); return m; };
   await p.onload();
@@ -91,23 +98,32 @@ function seen(v, name, n) {
     check("lookahead 0 is just today", () => assert.strictEqual(b.days.length, 1));
   }
 
-  console.log("\nLabels and the once-a-day gate");
+  console.log("\nLabels and the interval gate");
   check("today and tomorrow by name", () => {
     assert.strictEqual(R.dayLabel("2026-10-13", 0), "Today");
     assert.strictEqual(R.dayLabel("2026-10-14", 1), "Tomorrow");
   });
   check("later days by weekday and date", () => assert.strictEqual(R.dayLabel("2026-10-15", 2), "Thu 10-15"));
-  check("shown once per day", () => {
-    assert.strictEqual(R.shouldShowReminder("", TODAY), true);
-    assert.strictEqual(R.shouldShowReminder("2026-10-12", TODAY), true);
-    assert.strictEqual(R.shouldShowReminder(TODAY, TODAY), false);
+  check("shown once per interval", () => {
+    const at = (h) => new Date(2026, 9, 13, h).getTime(), now = at(22);
+    assert.strictEqual(R.shouldShowReminder(0, now, 8), true);
+    assert.strictEqual(R.shouldShowReminder(at(14), now, 8), true);
+    assert.strictEqual(R.shouldShowReminder(at(15), now, 8), false);
+    assert.strictEqual(R.shouldShowReminder(at(15), now, 6), true);
   });
+  check("and on the first open of a new day, within the interval too", () => {
+    const yesterday = new Date(2026, 9, 12, 23).getTime(), today = new Date(2026, 9, 13, 1).getTime();
+    assert.strictEqual(R.shouldShowReminder(yesterday, today, 24), true);
+    assert.strictEqual(R.shouldShowReminder(today, today + 3600000, 24), false);
+  });
+  check("a last-shown time in the future (another device's clock) doesn't silence it", () =>
+    assert.strictEqual(R.shouldShowReminder(Date.now() + day, Date.now(), 8), true));
 
   console.log("\nStartup");
   {
     const { plugin, opened } = await boot((v) => seen(v, "Akos", 20));
-    check("the first open of the day shows the pop-up", () => assert.strictEqual(opened.length, 1));
-    check("and remembers the day", () => assert.strictEqual(plugin.settings.lastReminderDate, iso(Date.now())));
+    check("the first open shows the pop-up", () => assert.strictEqual(opened.length, 1));
+    check("and remembers when", () => assert.ok(Date.now() - plugin.settings.lastReminderAt < 5000));
     check("no text notice any more", () =>
       assert.ok(!notices.some((n) => String(n).includes("reach out to"))));
     const content = JSON.stringify(opened[0].el, (k, val) => (k === "parent" ? undefined : val));
@@ -175,8 +191,38 @@ function seen(v, name, n) {
     panel?.close();
   }
   {
-    const { opened } = await boot((v) => seen(v, "Akos", 20), { lastReminderDate: iso(Date.now()) });
-    check("a second open the same day stays quiet", () => assert.strictEqual(opened.length, 0));
+    // A minute ago, so it's the same day too (unless this runs in the first minute after midnight).
+    const { opened } = await boot((v) => seen(v, "Akos", 20), { lastReminderAt: Date.now() - 60000 });
+    check("an open within the interval stays quiet", () => assert.strictEqual(opened.length, 0));
+  }
+  {
+    const { opened } = await boot((v) => seen(v, "Akos", 20), { lastReminderAt: Date.now() - 9 * 3600000 });
+    check("an open after the interval (8h by default) shows it again", () => assert.strictEqual(opened.length, 1));
+    opened[0]?.close();
+  }
+  {
+    const { plugin, opened } = await boot((v) => seen(v, "Akos", 20), { lastReminderAt: Date.now() - 60000 });
+    const focus = plugin.domEvents.filter((e) => e.type === "focus");
+    check("it listens for the window coming back", () => assert.strictEqual(focus.length, 1));
+    focus[0].handler();
+    check("which stays quiet within the interval", () => assert.strictEqual(opened.length, 0));
+    plugin.settings.lastReminderAt = Date.now() - 9 * 3600000;
+    focus[0].handler();
+    check("and shows it once the interval has passed", () => assert.strictEqual(opened.length, 1));
+    focus[0].handler();
+    check("but not over one already open", () => assert.strictEqual(opened.length, 1));
+    opened[0].close();
+  }
+  {
+    const { opened } = await boot((v) => seen(v, "Akos", 20), { lastReminderDate: todayLocal() });
+    check("seen today under the old once-a-day stamp counts as seen", () => assert.strictEqual(opened.length, 0));
+  }
+  {
+    const { plugin: big } = await boot(() => {}, { reminderIntervalHours: 1000 });
+    const { plugin: small } = await boot(() => {}, { reminderIntervalHours: 0.4 });
+    const { plugin: bad } = await boot(() => {}, { reminderIntervalHours: "soon" });
+    check("a hand-edited interval is held to 1–24 whole hours", () =>
+      assert.deepStrictEqual([big, small, bad].map((p) => p.settings.reminderIntervalHours), [24, 1, 8]));
   }
   {
     const { opened } = await boot((v) => seen(v, "Akos", 1));
@@ -187,9 +233,9 @@ function seen(v, name, n) {
     check("the startup toggle still turns it off", () => assert.strictEqual(opened.length, 0));
   }
   {
-    const { plugin, opened } = await boot((v) => seen(v, "Akos", 20), { lastReminderDate: iso(Date.now()) });
+    const { plugin, opened } = await boot((v) => seen(v, "Akos", 20), { lastReminderAt: Date.now() });
     plugin.__cmds.find((c) => c.id === "show-reminder").callback();
-    check("the command opens it regardless of the day gate", () => assert.strictEqual(opened.length, 1));
+    check("the command opens it regardless of the interval gate", () =>assert.strictEqual(opened.length, 1));
   }
 
   console.log("\nReview fixes");

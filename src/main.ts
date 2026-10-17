@@ -160,7 +160,13 @@ export default class PrmPlugin extends Plugin {
 			this.firstBuildDone = true;
 			// After the week notes' day lines are read: until then a link there is dated
 			// by the week's Monday, which reports people overdue who aren't.
-			if (this.settings.notifyOnStartup) void this.engine.whenDayLinesRead().then(() => this.dailyReminder());
+			void this.engine.whenDayLinesRead().then(() => {
+				if (this.unloaded) return;
+				this.startupReminder();
+				// Coming back to the window counts as opening Obsidian, so one left open all day
+				// still reminds once the interval has passed.
+				this.registerDomEvent(window, "focus", () => this.startupReminder());
+			});
 		}
 	}
 
@@ -215,6 +221,16 @@ export default class PrmPlugin extends Plugin {
 		if (typeof oldPeople === "string" && oldPeople.length > 0 && !stored["personFolders"]) {
 			this.settings.personFolders = [cleanFolderPath(oldPeople)];
 		}
+		// The once-a-day gate became an interval. Seen today under the old stamp counts as seen now.
+		const oldReminderDate = stored["lastReminderDate"];
+		delete (this.settings as unknown as Record<string, unknown>)["lastReminderDate"];
+		if (!Number.isFinite(this.settings.lastReminderAt)) this.settings.lastReminderAt = 0;
+		if (oldReminderDate === todayISO() && !this.settings.lastReminderAt) this.settings.lastReminderAt = Date.now();
+		// The slider's range, 1 to 24 whole hours, also for a hand-edited data.json.
+		const hours = Number(this.settings.reminderIntervalHours);
+		this.settings.reminderIntervalHours = Number.isFinite(hours)
+			? Math.min(24, Math.max(1, Math.round(hours)))
+			: DEFAULT_SETTINGS.reminderIntervalHours;
 		const oldJournals = stored["journalFolders"];
 		if (Array.isArray(oldJournals) && !stored["journalSources"]) {
 			this.settings.journalSources = oldJournals
@@ -1463,14 +1479,16 @@ export default class PrmPlugin extends Plugin {
 		);
 	}
 
-	/** On the first open of each day, the pop-up of who to reach out to. */
-	private dailyReminder(): void {
-		const today = todayISO();
-		if (!shouldShowReminder(this.settings.lastReminderDate, today)) return;
-		// A day with nobody due isn't spent: someone may still come due by a later open.
+	/** On the first open of each day and after each reminder interval, the pop-up of who to reach out to. */
+	private startupReminder(): void {
+		if (!this.settings.notifyOnStartup || this.reminderPanel) return;
+		const now = Date.now();
+		if (!shouldShowReminder(this.settings.lastReminderAt, now, this.settings.reminderIntervalHours)) return;
+		// An interval with nobody due isn't spent: someone may still come due by a later open.
 		if (!this.openReminder()) return;
-		this.settings.lastReminderDate = today;
-		void this.saveSettings();
+		this.settings.lastReminderAt = now;
+		// Straight to disk: saveSettings would reindex the vault for a timestamp.
+		void this.saveData(this.settings);
 	}
 
 	/** Open the reminder now, replacing one already open; null, and nothing shown, when nobody is due. */

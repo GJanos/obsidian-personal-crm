@@ -8,7 +8,7 @@ import { LogContactModal, PersonActionsModal, SnoozeModal, TierPickerModal } fro
 /**
  * One person's row, as the dashboard draws it.
  *
- * Shared by the dashboard and the daily reminder, so the pop-up shows the same row
+ * Shared by the dashboard and the startup reminder, so the pop-up shows the same row
  * as the main page instead of a look-alike that drifts. The dashboard's own powers —
  * selection, and filtering by a tag or place — come in as hooks; without them the
  * row is plain: those chips don't click, and a click on the row opens its actions.

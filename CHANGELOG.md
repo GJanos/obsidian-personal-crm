@@ -20,8 +20,9 @@ All notable changes to Personal CRM. Versions follow
   group note, unless `prm-ignore-group: true`. A group is tracked like a person, with
   its own tier. It goes one way: a member's contact doesn't count for the group, and
   a group in a group passes on only its own contact.
-- **A daily reminder panel** replaces the startup notice. On the first open of each
-  day, once week-note day lines are read, it lists who's overdue, then who falls due
+- **A reminder panel** replaces the startup notice. On the first open of each day, and
+  on opening or coming back to Obsidian once *Remind again after* has passed (8 hours by
+  default, up to 24), once week-note day lines are read, it lists who's overdue, then who falls due
   today, tomorrow and each day after up to *Days to look ahead* (3 by default), as the
   dashboard's own rows with their actions. It floats in the top-right corner without
   blocking the vault, and stays until its X is clicked. Someone logged or snoozed from

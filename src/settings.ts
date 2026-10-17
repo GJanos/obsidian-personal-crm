@@ -107,8 +107,10 @@ export interface PrmSettings {
 	notifyOnStartup: boolean;
 	/** Days after today the startup reminder covers; 0 is overdue and today only. */
 	reminderLookaheadDays: number;
-	/** The day the startup reminder last appeared, so it shows once a day. */
-	lastReminderDate: string;
+	/** Hours that must pass before the startup reminder shows again. */
+	reminderIntervalHours: number;
+	/** When the startup reminder last appeared (epoch ms), for the interval. */
+	lastReminderAt: number;
 	nextUpCount: number;
 
 	/** Also append a human-readable line under a heading in the person's note. */
@@ -173,7 +175,8 @@ export const DEFAULT_SETTINGS: PrmSettings = {
 	showStatusBar: true,
 	notifyOnStartup: true,
 	reminderLookaheadDays: 3,
-	lastReminderDate: "",
+	reminderIntervalHours: 8,
+	lastReminderAt: 0,
 	nextUpCount: 5,
 
 	logToBody: true,
@@ -1059,8 +1062,21 @@ export class PrmSettingTab extends PluginSettingTab {
 				},
 				{
 					name: "Remind me when Obsidian starts",
-					desc: "On the first open of each day, a pop-up of who's overdue and who's due soon.",
+					desc: "On the first open of each day and after each interval, a pop-up of who's overdue and who's due soon.",
 					control: { type: "toggle", key: "notifyOnStartup" },
+				},
+				{
+					name: "Remind again after",
+					desc: "Hours before opening or coming back to Obsidian shows the reminder again. A new day always shows it.",
+					visible: () => this.plugin.settings.notifyOnStartup,
+					control: {
+						type: "slider",
+						key: "reminderIntervalHours",
+						min: 1,
+						max: 24,
+						step: 1,
+						displayFormat: (v: number) => (v === 1 ? "1 hour" : `${v} hours`),
+					},
 				},
 				{
 					name: "Days to look ahead",

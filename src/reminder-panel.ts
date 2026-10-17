@@ -6,7 +6,7 @@ import type { PersonRecord } from "./types";
 import { todayISO } from "./dates";
 
 /**
- * The daily reminder: who's overdue and who falls due in the next few days, as the
+ * The startup reminder: who's overdue and who falls due in the next few days, as the
  * dashboard's own rows.
  *
  * A floating panel, not a modal: it blocks nothing behind it, so the vault stays

@@ -20,7 +20,7 @@ export interface ReminderBuckets {
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /**
- * Sort people into the daily reminder's sections.
+ * Sort people into the startup reminder's sections.
  *
  * Status is not the test for a day, `overdueDays` is: the due-soon window is a
  * dashboard setting, and a lookahead longer than it should still show the people
@@ -68,7 +68,13 @@ export function dayLabel(date: string, offset: number): string {
 	return `${weekday} ${date.slice(5)}`;
 }
 
-/** The pop-up shows on the first open of each day. */
-export function shouldShowReminder(lastShown: string, today: string): boolean {
-	return lastShown !== today;
+/**
+ * The pop-up shows on the first open of each day, since its sections are days, and on
+ * the first open once `intervalHours` have passed since it last appeared. A last-shown
+ * time in the future (another device's clock, a synced data.json) doesn't silence it.
+ */
+export function shouldShowReminder(lastShownAt: number, now: number, intervalHours: number): boolean {
+	const elapsed = now - lastShownAt;
+	if (elapsed < 0 || elapsed >= intervalHours * 3_600_000) return true;
+	return new Date(lastShownAt).toDateString() !== new Date(now).toDateString();
 }
