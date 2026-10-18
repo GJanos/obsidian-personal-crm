@@ -81,8 +81,29 @@ export function attachLinkSuggest(app, inputEl) {
             list.style.top = `${box.bottom + 4}px`;
         }
     };
+    // While the list shows, Escape closes it rather than the dialog around the box: a key scope
+    // on top of the current one, as Obsidian's own suggestion lists do (keys it doesn't take fall
+    // through). Its key map isn't public API, so without one Escape stays the dialog's.
+    let scope = null;
+    const keymap = app.keymap;
+    const holdEscape = () => {
+        const Scope = keymap?.rootScope?.constructor;
+        const current = keymap?.getWindowStack?.(win)?.scope;
+        if (scope || typeof Scope !== "function" || !current || typeof keymap.pushScope !== "function") return;
+        scope = new Scope(current);
+        scope.register([], "Escape", () => {
+            close();
+            return false;
+        });
+        keymap.pushScope(scope);
+    };
+    // A box removed with its dialog doesn't always get a blur, so the list checks it's still there.
+    let watch = null;
     const close = () => {
         shown = [];
+        if (scope) keymap.popScope(scope);
+        scope = null;
+        win.clearInterval(watch);
         if (!list) return;
         list.remove();
         list = null;
@@ -111,6 +132,10 @@ export function attachLinkSuggest(app, inputEl) {
             doc.body.appendChild(list);
             doc.addEventListener("scroll", place, true);
             win.addEventListener("resize", place);
+            watch = win.setInterval(() => {
+                if (!inputEl.isConnected) close();
+            }, 500);
+            holdEscape();
         }
         list.replaceChildren();
         shown.forEach((file, i) => {

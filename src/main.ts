@@ -24,10 +24,11 @@ import { ContactImportModal } from "./import-modal";
 import { FileSnapshot, UndoEntry, UndoManager , type UndoResult } from "./undo";
 import { WriteQueue } from "./writes";
 import { detectJournalSources, detectPeopleFolder } from "./detect";
-import { formatCadence, formatDuration, isISODate, todayISO } from "./dates";
+import { coerceISODate, formatCadence, formatDuration, isISODate, todayISO } from "./dates";
 import type { LoopRef, PersonRecord } from "./types";
 import { appendFollowUp, appendUnder, hasHeading, setTask } from "./loops";
-import { findHeading, shallowestHeadingLevel } from "./markdown";
+import { findHeading, sectionEnd, shallowestHeadingLevel } from "./markdown";
+import { findLogEntry, mergeLogNote } from "./contact-log";
 import {
 	asDisplay,
 	contactFields,
@@ -57,6 +58,12 @@ export interface BulkResult {
 
 function describeCount(n: number, one: string, many: string): string {
 	return `${n} ${n === 1 ? one : many}`;
+}
+
+/** Sets the last contact, never moving it back: logging an older day keeps a newer contact. */
+function setLastContacted(fm: MutableFrontmatter, date: string): void {
+	const current = coerceISODate(fm[FRONTMATTER_KEYS.lastContacted]);
+	if (!current || current <= date) fm[FRONTMATTER_KEYS.lastContacted] = date;
 }
 
 export default class PrmPlugin extends Plugin {
@@ -1118,7 +1125,18 @@ export default class PrmPlugin extends Plugin {
 		return true;
 	}
 
-	async logContact(file: TFile, date = todayISO(), note?: string): Promise<void> {
+	/**
+	 * Logs a contact on `date`. With `merge` (the Journal plugin's Day entry, which saves a
+	 * day as often as it is edited) the log keeps one bullet a day: a day it already has gets
+	 * the note there, replacing `previous` (the day's earlier note), and an older day never
+	 * moves the last contact back. Without it every call adds a bullet, as upstream does.
+	 */
+	async logContact(
+		file: TFile,
+		date = todayISO(),
+		note?: string,
+		{ merge = false, previous }: { merge?: boolean; previous?: string } = {},
+	): Promise<void> {
 		if (!isISODate(date)) {
 			new Notice(`"${date}" isn't a valid date (expected YYYY-MM-DD).`);
 			return;
@@ -1132,11 +1150,12 @@ export default class PrmPlugin extends Plugin {
 				// log written first, that left the bullet applied with no undo entry, so
 				// every retry added another copy.
 				await this.app.fileManager.processFrontMatter(file, (fm: MutableFrontmatter) => {
-					fm[FRONTMATTER_KEYS.lastContacted] = date;
+					if (merge) setLastContacted(fm, date);
+					else fm[FRONTMATTER_KEYS.lastContacted] = date;
 					// An explicit "I've handled this" makes any snooze meaningless.
 					delete fm[FRONTMATTER_KEYS.snoozeUntil];
 				});
-				if (this.settings.logToBody) await this.appendBodyLog(file, date, note);
+				if (this.settings.logToBody) await this.appendBodyLog(file, date, note, merge ? { previous } : null);
 			});
 			this.afterWrite(`Logged contact with ${file.basename}.`, entry);
 		} catch (err) {
@@ -1329,13 +1348,19 @@ export default class PrmPlugin extends Plugin {
 	}
 
 	/**
-	 * Insert a dated bullet under the log heading, newest first.
+	 * Insert a dated bullet under the log heading, newest first. With `sameDay`, a day
+	 * that already has one gets the note merged into it instead (see contact-log.ts).
 	 *
 	 * Heading positions come from the metadata cache, which is fence-aware — a
 	 * line-scan would happily match a `# Contact log` inside a code block.
 	 * `vault.process` makes the read-modify-write atomic.
 	 */
-	private async appendBodyLog(file: TFile, date: string, note?: string): Promise<void> {
+	private async appendBodyLog(
+		file: TFile,
+		date: string,
+		note?: string,
+		sameDay: { previous?: string } | null = null,
+	): Promise<void> {
 		const heading = this.settings.bodyLogHeading;
 		const entry = this.logEntry(date, note);
 
@@ -1345,6 +1370,11 @@ export default class PrmPlugin extends Plugin {
 			// the frontmatter first — and the bullet landed inside the YAML, which
 			// destroyed it. These bytes are the bytes being written, so they can't lag.
 			const match = findHeading(data, heading);
+			const day = match && sameDay ? findLogEntry(data, match.afterLine, sectionEnd(data, match), date) : null;
+			if (day) {
+				const merged = mergeLogNote(day.line, note ?? "", sameDay?.previous);
+				return `${data.slice(0, day.start)}${merged}${data.slice(day.end)}`;
+			}
 			if (match) {
 				return `${data.slice(0, match.afterLine)}${entry}\n${data.slice(match.afterLine)}`;
 			}

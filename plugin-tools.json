@@ -4,6 +4,9 @@
     ["styles.css", ".obsidian/plugins/personal-crm/styles.css"],
     ["manifest.json", ".obsidian/plugins/personal-crm/manifest.json"]
   ],
-  "shared": { "link-suggest.js": "src/shared/link-suggest.js" },
+  "shared": {
+    "link-suggest.js": "src/shared/link-suggest.js",
+    "week-note.js": "src/shared/week-note.js"
+  },
   "fork": { "branch": "main", "upstream": "upstream/main" }
 }
