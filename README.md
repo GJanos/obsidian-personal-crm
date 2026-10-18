@@ -81,7 +81,8 @@ Also counted (this fork):
   `with: ["[[Alex]]", "[[Ervin]]"]` counts as contact with both on the note's date.
   Plain names don't count; only links do.
 - **The day inside a week note.** Give a dated folder a *day line pattern* (e.g.
-  `^\*(\d{2}-\d{2})\*\s*$` for a `*10-07*` line per day) and a link takes the date of
+  `^\*(\d{2}-\d{2})\*(?:\s+\^d\d{4})?\s*$` for a `*10-07*` (or `*10-07* ^d1007`) line per day)
+  and a link takes the date of
   the day line above it, instead of the date in the filename (the week's Monday).
   These notes are the one thing the plugin reads as text: once per change, off the
   index rebuild.

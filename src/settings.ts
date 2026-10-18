@@ -701,7 +701,7 @@ export class PrmSettingTab extends PluginSettingTab {
 					control: {
 						type: "text" as const,
 						key: `journalSources.${index}.dayLine`,
-						placeholder: "^\\*(\\d{2}-\\d{2})\\*\\s*$",
+						placeholder: "^\\*(\\d{2}-\\d{2})\\*(?:\\s+\\^d\\d{4})?\\s*$",
 					},
 				},
 			],

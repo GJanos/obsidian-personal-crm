@@ -2,20 +2,30 @@
 // their highlights, Personal CRM dates the contacts in them).
 //
 // A week note is named by its ISO week (`2026-W43`) and holds seven days, each started by an
-// italic day line (`*10-19*`). Under a day: the mantra checkboxes, `h: …` highlights with their
-// `e: …` details, then the private log. The week table (`| date | imp | gen | … |`) has a row per
+// italic day line (`*10-19*`), which may end in the day's block ID (`*10-19* ^d1019`) so an event
+// note can link to the exact day (`[[2026-W43#^d1019|Mon, Oct 19]]`). Under a day: the mantra
+// checkboxes, `h: …` highlights with their `e: …` details, then the private log. The week table (`| date | imp | gen | … |`) has a row per
 // day (`| **10-19** | Y | 7 | … |`); imp = Y marks a big day.
 //
 // Source: plugin-tools/shared/week-note.js. `node ../plugin-tools/sync-shared.js` copies it into
 // each plugin (see the README); edit it here, never in a copy. Pure functions only.
 
-export const DAY_HEADING = /^\*(\d{2}-\d{2})\*\s*$/;
+export const DAY_HEADING = /^\*(\d{2}-\d{2})\*(?:\s+\^d\d{4})?\s*$/;
 export const HIGHLIGHT = /^h:\s*(.*)$/i;
 export const EXTRA = /^e:\s*(.*)$/i;
 export const CHECKBOX = /^\s*- \[.\]/;
 export const WEEK_NAME = /^(\d{4})-W(\d{2})$/;
 
 export const isYes = value => /^y$/i.test(value ?? "");
+
+// The block ID of the day "MM-DD": d + MMDD ("08-18" → "d0818"). Unique inside a week note.
+export const dayAnchor = monthDay => `d${monthDay.replace("-", "")}`;
+
+// The note with every bare day line given its block ID (`*10-19*` → `*10-19* ^d1019`). Lines that
+// have one, and everything else, stay as they are; line endings are kept.
+export function withDayAnchors(content) {
+    return content.replace(/^\*(\d{2}-\d{2})\*[ \t]*(\r?)$/gm, (_, day, cr) => `*${day}* ^${dayAnchor(day)}${cr}`);
+}
 
 export function lines(content) {
     return content.replace(/\r\n/g, "\n").split("\n");

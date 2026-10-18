@@ -14,7 +14,7 @@ let passed = 0, failed = 0;
 const check = (n, f) => { try { f(); console.log(`  ✓ ${n}`); passed++; }
   catch (e) { console.error(`  ✗ ${n}\n     ${e.message}`); failed++; } };
 
-const DAY_LINE = "^\\*(\\d{2}-\\d{2})\\*\\s*$";
+const DAY_LINE = "^\\*(\\d{2}-\\d{2})\\*(?:\\s+\\^d\\d{4})?\\s*$";
 const PERSON = "---\ntags:\n  - people\nprm-tier: casual\n---\n";
 
 async function boot(build, source = {}) {
@@ -49,6 +49,16 @@ async function boot(build, source = {}) {
     check("Ana gets Saturday", () => assert.deepStrictEqual(ana.contactDates, ["2026-10-10"]));
     check("the date still jumps to the week note", () =>
       assert.strictEqual(sam.sources.get("2026-10-07"), "Weeks/2026-W41.md"));
+  }
+
+  console.log("\nDay lines that end in their block ID (*10-07* ^d1007) date their links too");
+  {
+    const { plugin } = await boot((v) => {
+      v.addFile("People/Sam.md", PERSON);
+      v.addFile("Weeks/2026-W41.md", "*10-05* ^d1005\nquiet day\n\n*10-07* ^d1007\nlunch with [[Sam]]\n");
+    });
+    check("Sam is dated Wednesday", () =>
+      assert.deepStrictEqual(plugin.engine.get("People/Sam.md").contactDates, ["2026-10-07"]));
   }
 
   console.log("\nLinks above the first day line keep the week's Monday");
