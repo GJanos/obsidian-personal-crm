@@ -28,6 +28,9 @@ export class ReminderPanel {
 	 */
 	private acted = new Set<string>();
 	private unsubscribe: (() => void) | null = null;
+	private resolveClosed!: () => void;
+	/** Settles when the panel is closed, by its X or replaced: the startup queue waits on it. */
+	readonly closed = new Promise<void>((resolve) => (this.resolveClosed = resolve));
 
 	constructor(
 		private plugin: PrmPlugin,
@@ -79,6 +82,7 @@ export class ReminderPanel {
 		this.slots.clear();
 		this.el.remove();
 		this.onClosed();
+		this.resolveClosed();
 	}
 
 	private section(parent: HTMLElement, heading: string, records: PersonRecord[], today: string): void {

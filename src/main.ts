@@ -45,6 +45,7 @@ import {
 import { defaultPersonNote, renderTemplate, sanitizeNoteName } from "./templates";
 import { reminderBuckets, shouldShowReminder } from "./reminder";
 import { ReminderPanel } from "./reminder-panel";
+import { startupQueue } from "./shared/startup-queue.js";
 
 interface WriteOptions {
 	silent?: boolean;
@@ -1509,26 +1510,38 @@ export default class PrmPlugin extends Plugin {
 		);
 	}
 
-	/** On the first open of each day and after each reminder interval, the pop-up of who to reach out to. */
+	/**
+	 * On the first open of each day and after each reminder interval, the pop-up of who to reach out
+	 * to. It takes its turn in the plugins' shared startup queue, first (Vault Health's card follows,
+	 * in the same spot).
+	 */
 	private startupReminder(): void {
 		if (!this.settings.notifyOnStartup || this.reminderPanel) return;
 		const now = Date.now();
 		if (!shouldShowReminder(this.settings.lastReminderAt, now, this.settings.reminderIntervalHours)) return;
 		// An interval with nobody due isn't spent: someone may still come due by a later open.
-		if (!this.openReminder()) return;
+		if (this.reminderBuckets().total === 0) return;
 		this.settings.lastReminderAt = now;
 		// Straight to disk: saveSettings would reindex the vault for a timestamp.
 		void this.saveData(this.settings);
+		startupQueue().add("personal-crm", 10, async () => {
+			const panel = this.openReminder();
+			if (panel) await panel.closed;
+		});
 	}
 
-	/** Open the reminder now, replacing one already open; null, and nothing shown, when nobody is due. */
-	openReminder(): ReminderPanel | null {
-		const buckets = reminderBuckets(
+	private reminderBuckets() {
+		return reminderBuckets(
 			this.engine.all(),
 			todayISO(),
 			this.settings.reminderLookaheadDays,
 			this.settings.tiers.map((t) => t.id),
 		);
+	}
+
+	/** Open the reminder now, replacing one already open; null, and nothing shown, when nobody is due. */
+	openReminder(): ReminderPanel | null {
+		const buckets = this.reminderBuckets();
 		if (this.unloaded || buckets.total === 0) return null;
 		this.reminderPanel?.close();
 		const panel = new ReminderPanel(this, buckets, () => {

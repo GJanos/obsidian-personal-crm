@@ -7,6 +7,11 @@ All notable changes to Personal CRM. Versions follow
 
 ### Added
 
+- **Skip this week.** Each row of the reach-out panel has a skip button: one click snoozes the
+  person to next Monday, without the snooze dialog.
+- **One pop-up at a time.** The startup panel takes its turn in a startup queue shared with the
+  user's other plugins (`plugin-tools/shared/startup-queue.js`): first, and Vault Health's card
+  follows in the same spot once it's closed.
 - **Day-accurate week notes.** A dated folder takes an optional day line pattern. In a
   week note with one `*MM-DD*` line per day, a link now gets the day it's written under
   rather than the Monday the filename names, with the year rolling over in a week that

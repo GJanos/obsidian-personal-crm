@@ -34,6 +34,7 @@ const todayLocal = () => {
 };
 
 async function boot(build, settings = {}) {
+  delete global.window.__pluginStartupQueue;
   const v = makeVault();
   build(v);
   const p = new PluginClass(v.app, { id: "personal-crm" });
@@ -46,7 +47,22 @@ async function boot(build, settings = {}) {
   p.openReminder = () => { const m = real(); if (m) opened.push(m); return m; };
   await p.onload();
   await new Promise((r) => setTimeout(r, 10));
-  return { plugin: p, opened, ...v };
+  return { plugin: p, opened, ...takeQueue(), ...v };
+}
+
+/**
+ * The startup panel waits its turn in the shared startup queue: take its turn now instead of after
+ * the queue's settle time. What was queued, and each show's promise (settles when it closes).
+ */
+function takeQueue() {
+  const queue = global.window.__pluginStartupQueue;
+  const queued = queue ? queue.items.map(({ id, priority }) => ({ id, priority })) : [];
+  const shown = [];
+  if (queue) {
+    clearTimeout(queue.timer);
+    for (const item of queue.items.splice(0)) shown.push(item.show());
+  }
+  return { queued, shown };
 }
 
 /** Someone on the 14-day "inner" tier last seen `n` days ago: due in 14 - n days. */
@@ -121,7 +137,9 @@ function seen(v, name, n) {
 
   console.log("\nStartup");
   {
-    const { plugin, opened } = await boot((v) => seen(v, "Akos", 20));
+    const { plugin, opened, queued, shown } = await boot((v) => seen(v, "Akos", 20));
+    check("the pop-up takes its turn in the shared startup queue, first", () =>
+      assert.deepStrictEqual(queued, [{ id: "personal-crm", priority: 10 }]));
     check("the first open shows the pop-up", () => assert.strictEqual(opened.length, 1));
     check("and remembers when", () => assert.ok(Date.now() - plugin.settings.lastReminderAt < 5000));
     check("no text notice any more", () =>
@@ -132,6 +150,9 @@ function seen(v, name, n) {
       assert.ok(activeDocument.body.children.includes(opened[0].el)));
     opened[0].close();
     check("X takes it off the page", () => assert.ok(!activeDocument.body.children.includes(opened[0].el)));
+    let settled = false;
+    await Promise.race([shown[0].then(() => { settled = true; }), new Promise((r) => setTimeout(r, 50))]);
+    check("and lets the queue move on", () => assert.ok(settled));
   }
   {
     const { plugin, opened } = await boot((v) => seen(v, "Akos", 20));
@@ -225,9 +246,10 @@ function seen(v, name, n) {
     check("which stays quiet within the interval", () => assert.strictEqual(opened.length, 0));
     plugin.settings.lastReminderAt = Date.now() - 9 * 3600000;
     focus[0].handler();
+    takeQueue();
     check("and shows it once the interval has passed", () => assert.strictEqual(opened.length, 1));
     focus[0].handler();
-    check("but not over one already open", () => assert.strictEqual(opened.length, 1));
+    check("but not over one already open", () => assert.deepStrictEqual([opened.length, takeQueue().queued], [1, []]));
     opened[0].close();
   }
   {
