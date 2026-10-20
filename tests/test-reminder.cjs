@@ -163,6 +163,23 @@ function seen(v, name, n) {
     panel.close();
   }
   {
+    const { plugin, opened } = await boot((v) => seen(v, "Akos", 20));
+    const panel = opened[0];
+    const D = require(harness.bundleModule("src/dates.ts"));
+    const row = () => panel.el.querySelectorAll(".prm-row").find((r) => r.dataset.prmPath === "People/Akos.md");
+    const skipOf = (r) => r.querySelectorAll("button").find((b) => String(b.attrs["aria-label"]).startsWith("Skip this week"));
+    const skip = skipOf(row());
+    check("each row has a one-click Skip this week", () => assert.ok(skip));
+    await skip.onclick();
+    await new Promise((r) => setTimeout(r, 10));
+    plugin.engine.rebuild();
+    check("which snoozes them to next Monday", () =>
+      assert.strictEqual(plugin.engine.get("People/Akos.md").snoozeUntil, D.nextMonday(todayLocal())));
+    check("and marks the row done, in place", () => assert.ok(row().classes.has("prm-row-done")));
+    check("a handled row has no Skip button", () => assert.ok(!skipOf(row())));
+    panel.close();
+  }
+  {
     // Seen on the Sunday of a week note, k days ago, with a k-day cadence: due today.
     // Dated by the week's Monday instead, they'd be six days overdue.
     let k = 7;

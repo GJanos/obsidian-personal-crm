@@ -1,9 +1,10 @@
+import { TFile } from "obsidian";
 import type PrmPlugin from "./main";
 import type { ReminderBuckets } from "./reminder";
 import { dayLabel } from "./reminder";
-import { appendIcon, renderPersonRow } from "./row";
+import { appendIcon, iconButton, renderPersonRow } from "./row";
 import type { PersonRecord } from "./types";
-import { todayISO } from "./dates";
+import { nextMonday, todayISO } from "./dates";
 
 /**
  * The startup reminder: who's overdue and who falls due in the next few days, as the
@@ -100,12 +101,30 @@ export class ReminderPanel {
 			showDueWhenOk: true,
 			onAction: (r) => this.acted.add(r.path),
 		});
-		if (!handled) return;
+		if (!handled) {
+			this.skipButton(row, record, today);
+			return;
+		}
 		row.addClass("prm-row-done");
 		// A snooze already says so on its own chip.
 		if (record.status !== "snoozed") {
 			row.querySelector(".prm-name-row")?.createSpan({ cls: "prm-chip prm-chip-done", text: "done" });
 		}
+	}
+
+	/**
+	 * "Not this week": one click snoozes the person to next Monday, the snooze dialog's most
+	 * common answer from here. An icon, so the row's buttons still fit a phone.
+	 */
+	private skipButton(row: HTMLElement, record: PersonRecord, today: string): void {
+		const actions = row.querySelector<HTMLElement>(".prm-row-actions");
+		if (!actions || record.status === "snoozed") return;
+		const until = nextMonday(today);
+		iconButton(actions, "skip-forward", `Skip this week (snooze to Mon ${until.slice(5)})`, async () => {
+			this.acted.add(record.path);
+			const file = this.plugin.app.vault.getAbstractFileByPath(record.path);
+			if (file instanceof TFile) await this.plugin.snooze(file, until);
+		});
 	}
 
 	/** Redraw every row in place from the fresh index, marking who was handled here. */
