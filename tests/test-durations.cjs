@@ -24,5 +24,11 @@ check("then months, then years", () =>
 check("short ones in days", () =>
   assert.deepStrictEqual([0, 1, 13].map(D.formatDuration), ["0d", "1d", "13d"]));
 
+console.log("\nNext Monday");
+check("from any day of the week, the coming Monday", () =>
+  assert.deepStrictEqual(["2026-10-19", "2026-10-20", "2026-10-25"].map(D.nextMonday), ["2026-10-26", "2026-10-26", "2026-10-26"]));
+check("across a month and a year", () =>
+  assert.deepStrictEqual(["2026-10-30", "2026-12-29"].map(D.nextMonday), ["2026-11-02", "2027-01-04"]));
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

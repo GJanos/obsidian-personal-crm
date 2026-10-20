@@ -76,6 +76,12 @@ export function addDays(iso: string, days: number): string {
 	return fromUTC(u + days * MS_PER_DAY);
 }
 
+/** The Monday after `iso` (a week on, when `iso` is a Monday): when "Skip week" ends. */
+export function nextMonday(iso: string): string {
+	const weekday = new Date(`${iso}T00:00:00Z`).getUTCDay(); // 0 Sunday … 6 Saturday
+	return addDays(iso, (8 - weekday) % 7 || 7);
+}
+
 /**
  * Pull a valid YYYY-MM-DD out of the shapes that actually turn up in
  * frontmatter. Deliberately conservative: ambiguous slash forms like `08/15/2026`
