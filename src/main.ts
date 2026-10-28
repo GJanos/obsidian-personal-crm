@@ -29,7 +29,8 @@ import type { LoopRef, PersonRecord } from "./types";
 import { appendFollowUp, appendUnder, hasHeading, setTask } from "./loops";
 import { findHeading, sectionEnd, shallowestHeadingLevel } from "./markdown";
 import { findLogEntry, mergeLogNote, relinkLogLine } from "./contact-log";
-import { addJournalEntry, type JournalLogStyle } from "./journal-write";
+import { dayMentions, type JournalLogStyle } from "./journal-write";
+import { journalApi } from "./shared/journal-client.js";
 import {
 	asDisplay,
 	contactFields,
@@ -1193,9 +1194,9 @@ export default class PrmPlugin extends Plugin {
 	 * the note there, replacing `previous` (the day's earlier note), and an older day never
 	 * moves the last contact back. Without it every call adds a bullet, as upstream does.
 	 *
-	 * Without `merge` the contact also reaches the day's journal note (see journal-write.ts):
-	 * `journalStyle` picks this log's shape, and the setting's is the default for the one-click
-	 * paths that have no dialog to ask in.
+	 * Without `merge` the contact also reaches the day's journal note, through the Journal
+	 * plugin's API v2 (see journal-write.ts): `journalStyle` picks this log's shape, and the
+	 * setting's is the default for the one-click paths that have no dialog to ask in.
 	 */
 	async logContact(
 		file: TFile,
@@ -1280,15 +1281,14 @@ export default class PrmPlugin extends Plugin {
 		style: JournalLogStyle,
 		note?: string,
 	): Promise<boolean> {
-		let changed = false;
-		await this.writes.run(day.file.path, async () => {
-			await this.app.vault.process(day.file, (data) => {
-				const next = addJournalEntry(data, day.pattern, date, name, style, note ?? "");
-				changed = next !== null && next !== data;
-				return next ?? data;
-			});
-		});
-		return changed;
+		if (style === "none") return false;
+		// Journal writes the line; without it (or on another API version) the contact is still
+		// logged here, just not into the week note.
+		const api = journalApi(this.app);
+		if (!api) return false;
+		const content = await this.app.vault.cachedRead(day.file);
+		if (dayMentions(content, day.pattern, date.slice(5), name)) return false;
+		return api.addDayLine(new Date(`${date}T12:00:00`), { style, name, note: note ?? "" });
 	}
 
 	/**
