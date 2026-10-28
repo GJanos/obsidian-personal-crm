@@ -20,3 +20,5 @@ tests/ui/.shot-*.png
 
 # plugin-tools: what was last deployed into the vault
 .deploy-state.json
+
+docs/
