@@ -5,6 +5,7 @@
 //
 // Source: plugin-tools/shared/link-suggest.js. `node ../plugin-tools/sync-shared.js` copies it into
 // each plugin (see the README); edit it here, never in a copy.
+// globals: document
 
 // The note name typed after an unclosed [[ just before `caret`; null when there's none.
 export function linkQuery(text, caret) {
@@ -47,6 +48,30 @@ const LINK_SUGGEST_STYLE = `
 
 // The boxes that already have it.
 const linkSuggestBoxes = new WeakSet();
+
+// The vault's markdown notes, filtered once per app and kept until the vault changes: rebuilding
+// the list on every keystroke is an O(vault) pass on the editor's thread (2026-10-21). It lives on
+// the app, not in a WeakMap: a plugin reload loads a new copy of this module, and the old copy's
+// listeners would otherwise stay on the app for good.
+const ELIGIBLE = "__linkSuggestEligible";
+function eligibleFiles(app) {
+    let entry = app[ELIGIBLE];
+    if (!entry) {
+        entry = { files: null };
+        const invalidate = () => {
+            entry.files = null;
+        };
+        app.vault.on?.("create", invalidate);
+        app.vault.on?.("delete", invalidate);
+        app.vault.on?.("rename", invalidate);
+        // Changing "Excluded files" in Settings re-resolves the cache, with no vault event.
+        app.metadataCache?.on?.("resolved", invalidate);
+        app[ELIGIBLE] = entry;
+    }
+    return (entry.files ??= app.vault
+        .getMarkdownFiles()
+        .filter(file => !app.metadataCache.isUserIgnored?.(file.path)));
+}
 
 // Gives `inputEl` the [[ suggestions; a second call on the same box does nothing (a React ref may
 // call it again), and so does one without a real document around (a plugin's tests). The list is
@@ -160,7 +185,7 @@ export function attachLinkSuggest(app, inputEl) {
     const update = () => {
         const query = linkQuery(inputEl.value, inputEl.selectionStart ?? inputEl.value.length);
         if (query === null) return close();
-        const files = app.vault.getMarkdownFiles().filter(file => !app.metadataCache.isUserIgnored?.(file.path));
+        const files = eligibleFiles(app);
         shown = linkMatches(files, query);
         active = 0;
         render();

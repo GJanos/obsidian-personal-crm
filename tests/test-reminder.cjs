@@ -33,7 +33,7 @@ const todayLocal = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
-async function boot(build, settings = {}) {
+async function boot(build, settings = {}, options = {}) {
   delete global.window.__pluginStartupQueue;
   const v = makeVault();
   build(v);
@@ -47,7 +47,7 @@ async function boot(build, settings = {}) {
   p.openReminder = () => { const m = real(); if (m) opened.push(m); return m; };
   await p.onload();
   await new Promise((r) => setTimeout(r, 10));
-  return { plugin: p, opened, ...takeQueue(), ...v };
+  return { plugin: p, opened, ...(options.take === false ? {} : takeQueue()), ...v };
 }
 
 /**
@@ -160,6 +160,35 @@ function seen(v, name, n) {
     check("opening it again replaces the panel instead of stacking a second", () =>
       assert.strictEqual(activeDocument.body.children.filter((c) => c.classes.has("prm-reminder-panel")).length, 1));
     opened.at(-1).close();
+  }
+  {
+    const { plugin, opened, shown } = await boot((v) => seen(v, "Akos", 20));
+    let settled = false;
+    shown[0].then(() => { settled = true; });
+    plugin.__cmds.find((c) => c.id === "show-reminder").callback(); // replace the queued panel
+    await new Promise((r) => setTimeout(r, 20));
+    check("replacing it keeps the queue waiting for the new panel", () => assert.strictEqual(settled, false));
+    opened.at(-1).close();
+    await new Promise((r) => setTimeout(r, 20));
+    check("and the replacement's close moves the queue on", () => assert.strictEqual(settled, true));
+  }
+  {
+    const { plugin } = await boot((v) => seen(v, "Akos", 20), {}, { take: false });
+    check("a queued reminder isn't counted as shown before it shows", () =>
+      assert.ok(!plugin.settings.lastReminderAt));
+    check("unloading drops the queued reminder", () => {
+      assert.strictEqual(global.window.__pluginStartupQueue.items.length, 1);
+      plugin.onunload();
+      assert.strictEqual(global.window.__pluginStartupQueue.items.length, 0);
+    });
+  }
+  {
+    const { plugin } = await boot((v) => seen(v, "Akos", 20), {}, { take: false });
+    const { shown } = takeQueue();
+    await new Promise((r) => setTimeout(r, 20));
+    check("once it shows, the interval starts", () => assert.ok(plugin.settings.lastReminderAt > 0));
+    plugin.reminderPanel?.close();
+    await shown[0];
   }
   {
     const { plugin, opened, app } = await boot((v) => { seen(v, "Akos", 20); seen(v, "Bea", 30); });

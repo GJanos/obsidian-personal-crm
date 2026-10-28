@@ -55,3 +55,21 @@ export function mergeLogNote(line: string, note: string, previous = ""): string 
 	if (!added || text.toLowerCase().includes(added.toLowerCase())) return line;
 	return withText(text ? `${text}; ${added}` : added);
 }
+
+/** A bullet's date as a bare date or a link whose target is the date itself. */
+const RELINKABLE_DATE = /^([-*]) (?:\[\[(\d{4}-\d{2}-\d{2})\]\]|(\d{4}-\d{2}-\d{2}))/;
+
+/**
+ * The line with its log date replaced by `token(date)`, when the bullet starts with
+ * one. Only a bare date and a link whose target is the date itself are rewritten: a
+ * `[[Note|2026-10-17]]` link points at another note, and rewriting it would lose that.
+ * A line whose date already reads as `token` comes back unchanged.
+ */
+export function relinkLogLine(line: string, token: (date: string) => string): string {
+	const match = RELINKABLE_DATE.exec(line);
+	if (!match) return line;
+	const date = match[2] ?? match[3];
+	const current = match[0].slice(2);
+	const next = token(date);
+	return next === current ? line : `${match[1]} ${next}${line.slice(match[0].length)}`;
+}

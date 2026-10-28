@@ -180,6 +180,26 @@ contact” date opens the note it came from.
 notes box for logging, and one-click access to cadence, snooze, tags and the note
 itself. The row's icon buttons stay for the fast path.
 
+### Logging writes the day too
+
+Logging a contact also puts it in that day's journal, so the journal records the
+conversation rather than only the person's own history. Two shapes:
+
+- a plain line in the day's log — `- Met [[Sam]] — coffee`
+- a highlight — `h: Met [[Sam]]`, with one `e:` detail per line of the notes box
+
+The Journal plugin's Day entry writes the highlight shape for someone met, so the
+two produce the same note. Pick the default under *Write the contact into the day's
+journal*; the log dialogs offer the same choice for that one log.
+
+Only a day inside a week note is written, into its own `*MM-DD*` section and by the
+same placement rules the Journal plugin uses. Logging the same person twice on a day
+merges into the line already there, and someone already named that day (a sentence, a
+`With` line) is left alone. A day with no note gets nothing — the log dialog says so
+for the date you picked — and neither does someone with `prm-ignore-journal: true`.
+Saving a Day entry never writes back — that is the journal writing itself. One undo
+takes the person's note and the journal line back together.
+
 The **status bar** shows a live count of who's waiting.
 
 The list is **windowed**: one viewport of rows is built up front and more are appended

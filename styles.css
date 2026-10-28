@@ -1281,6 +1281,14 @@ a.prm-place:hover {
 	font-size: var(--font-ui-smaller);
 }
 
+/* Why a chosen date gets no journal line. Hidden when there is nothing to say. */
+.prm-journal-hint {
+	margin: -0.25rem 0 0.75rem;
+}
+.prm-journal-hint:empty {
+	display: none;
+}
+
 .prm-suggestion-title {
 	color: var(--text-normal);
 }

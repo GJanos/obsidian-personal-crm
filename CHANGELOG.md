@@ -7,6 +7,18 @@ All notable changes to Personal CRM. Versions follow
 
 ### Added
 
+- **A logged contact reaches the day's journal.** Logging from the dashboard, the
+  reach-out panel or a person's panel also writes it into that day's week note — a
+  plain `- Met [[Sam]] — …` line in the day's log, or a `h: Met [[Sam]]` highlight with
+  one `e:` per line of notes, the shape the Journal plugin's Day entry writes for
+  someone met. The default shape is a setting; the log dialogs offer the same choice
+  per log. The line goes into the day's own `*MM-DD*` section by the Journal plugin's
+  placement rules, logging the same person twice on a day merges, someone already
+  named that day is left alone, and one undo takes the person's note and the journal
+  line back together. A Day entry save (`merge`) never writes back into the journal.
+  Someone with `prm-ignore-journal: true` gets no line — it would never count, and the
+  opt-out is about their presence in the journal, not only about counting it. A log
+  dialog says so when the chosen date has no week note to write into.
 - **Skip this week.** Each row of the reach-out panel has a skip button: one click snoozes the
   person to next Monday, without the snooze dialog.
 - **One pop-up at a time.** The startup panel takes its turn in a startup queue shared with the

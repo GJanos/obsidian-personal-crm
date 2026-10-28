@@ -12,6 +12,7 @@ import {
 import type PrmPlugin from "./main";
 import type { Tier } from "./types";
 import type { JournalSource } from "./journal";
+import type { JournalLogStyle } from "./journal-write";
 import { formatCadence } from "./dates";
 import { ConfirmModal } from "./modals";
 
@@ -118,6 +119,11 @@ export interface PrmSettings {
 	bodyLogHeading: string;
 	/** Write the log date as a [[wikilink]] to that day's note. */
 	linkDailyNoteInLog: boolean;
+	/**
+	 * How a logged contact also reaches that day's journal note: a plain line in the
+	 * day's log, a `Met [[Name]]` highlight, or nothing at all.
+	 */
+	journalLogStyle: JournalLogStyle;
 
 	importOverwriteExisting: boolean;
 	importIncludeGivenNameMatches: boolean;
@@ -182,6 +188,7 @@ export const DEFAULT_SETTINGS: PrmSettings = {
 	logToBody: true,
 	bodyLogHeading: "Contact log",
 	linkDailyNoteInLog: true,
+	journalLogStyle: "line",
 
 	importOverwriteExisting: false,
 	importIncludeGivenNameMatches: false,
@@ -851,6 +858,20 @@ export class PrmSettingTab extends PluginSettingTab {
 				visible: () =>
 					this.plugin.settings.logToBody && this.plugin.settings.linkDailyNoteInLog,
 				control: { type: "toggle", key: "alwaysLinkLogDate" },
+			},
+			{
+				name: "Write the contact into the day's journal",
+				desc: "A contact logged here also gets a line in that day's week note. A plain line is free text in the day's log; a highlight is what the Journal plugin's Day entry writes for someone met. Logging with details picks either for that log alone.",
+				aliases: ["journal", "week note", "day", "diary", "highlight"],
+				control: {
+					type: "dropdown",
+					key: "journalLogStyle",
+					options: {
+						line: "Plain line",
+						highlight: "Met highlight",
+						none: "Don't write it",
+					},
+				},
 			},
 		];
 

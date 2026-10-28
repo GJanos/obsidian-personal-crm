@@ -369,7 +369,8 @@ export class PrmDashboardView extends ItemView {
 		act("Log contact", "check", () => {
 			new LogContactModal(this.plugin, null, {
 				count: paths.length,
-				onSubmit: (date, note) => void this.plugin.bulkLogContact(paths, date, note),
+				onSubmit: (date, note, journalStyle) =>
+					void this.plugin.bulkLogContact(paths, date, note, journalStyle),
 			}).open();
 		});
 		act("Set cadence", "gauge", () => {

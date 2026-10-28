@@ -4,13 +4,15 @@
 // A week note is named by its ISO week (`2026-W43`) and holds seven days, each started by an
 // italic day line (`*10-19*`), which may end in the day's block ID (`*10-19* ^d1019`) so an event
 // note can link to the exact day (`[[2026-W43#^d1019|Mon, Oct 19]]`). Under a day: the mantra
-// checkboxes, `h: …` highlights with their `e: …` details, then the private log. The week table (`| date | imp | gen | … |`) has a row per
+// checkboxes, a blank line, then the `h: …` highlights with their `e: …` details and the private
+// log. The week table (`| date | imp | gen | … |`) has a row per
 // day (`| **10-19** | Y | 7 | … |`); imp = Y marks a big day.
 //
 // Source: plugin-tools/shared/week-note.js. `node ../plugin-tools/sync-shared.js` copies it into
 // each plugin (see the README); edit it here, never in a copy. Pure functions only.
+// globals: none
 
-export const DAY_HEADING = /^\*(\d{2}-\d{2})\*(?:\s+\^d\d{4})?\s*$/;
+export const DAY_HEADING = /^\*(\d{2}-\d{2})\*(?:\s+\^(d\d{4}))?\s*$/;
 export const HIGHLIGHT = /^h:\s*(.*)$/i;
 export const EXTRA = /^e:\s*(.*)$/i;
 export const CHECKBOX = /^\s*- \[.\]/;
@@ -25,6 +27,28 @@ export const dayAnchor = monthDay => `d${monthDay.replace("-", "")}`;
 // have one, and everything else, stay as they are; line endings are kept.
 export function withDayAnchors(content) {
     return content.replace(/^\*(\d{2}-\d{2})\*[ \t]*(\r?)$/gm, (_, day, cr) => `*${day}* ^${dayAnchor(day)}${cr}`);
+}
+
+// The note with exactly one blank line between each day's mantra checkboxes and its first body
+// line (an h:/e: pair, the log). Without it Markdown reads the body as a lazy continuation of the
+// last checklist item, not as a block of its own. Days without mantras and everything else stay
+// as they are; line endings are kept.
+export function withMantraGap(content) {
+    const eol = content.includes("\r\n") ? "\r\n" : "\n";
+    const all = lines(content);
+    for (let index = 0; index < all.length; index++) {
+        if (!DAY_HEADING.test(all[index])) continue;
+        let last = index;
+        while (last + 1 < all.length && CHECKBOX.test(all[last + 1])) last++;
+        if (last === index) continue;   // no mantras
+        let next = last + 1;
+        while (next < all.length && !all[next].trim()) next++;
+        // The day ends with its mantras (or the next day starts): nothing to separate.
+        if (next >= all.length || DAY_HEADING.test(all[next])) continue;
+        all.splice(last + 1, next - last - 1, "");
+        index = last;
+    }
+    return all.join(eol);
 }
 
 export function lines(content) {
@@ -52,8 +76,9 @@ export function parseTable(content) {
         });
 }
 
-// The days of a week note in note order: [{ date: "MM-DD", line, highlights, firstLine }], `line`
-// the 0-based line of the day heading. A filled h: line starts a highlight ({ headline, details,
+// The days of a week note in note order: [{ date: "MM-DD", anchor, line, highlights, firstLine }],
+// `anchor` the day's block ID ("d1019") or null on a day line written before anchors existed;
+// `line` the 0-based line of the day heading. A filled h: line starts a highlight ({ headline, details,
 // line }) and each filled e: line under it adds a detail; empty h:/e: placeholders and the
 // checkboxes are skipped. `firstLine` is the day's first other line (its log), for weeks written
 // before h:/e: existed.
@@ -64,7 +89,7 @@ export function weekDays(content) {
     lines(content).forEach((raw, index) => {
         const heading = DAY_HEADING.exec(raw);
         if (heading) {
-            day = { date: heading[1], line: index, highlights: [], firstLine: "" };
+            day = { date: heading[1], anchor: heading[2] ?? null, line: index, highlights: [], firstLine: "" };
             days.push(day);
             current = null;
             return;

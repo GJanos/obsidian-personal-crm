@@ -76,13 +76,20 @@ export class ReminderPanel {
 		activeDocument.body.appendChild(this.el);
 	}
 
-	close(): void {
+	/** `replaced`: another panel takes its place, so the queue must wait for that one instead. */
+	close(replaced = false): void {
 		this.unsubscribe?.();
 		this.unsubscribe = null;
 		this.slots.clear();
 		this.el.remove();
 		this.onClosed();
-		this.resolveClosed();
+		if (!replaced) this.resolveClosed();
+	}
+
+	/** The startup queue waited on this panel: keep it waiting for the one that took its place. */
+	replaceWith(next: ReminderPanel): void {
+		this.close(true);
+		void next.closed.then(() => this.resolveClosed());
 	}
 
 	private section(parent: HTMLElement, heading: string, records: PersonRecord[], today: string): void {

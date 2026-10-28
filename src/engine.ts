@@ -55,6 +55,13 @@ interface Range {
 export class PrmEngine {
 	private index = new Map<string, PersonRecord>();
 	private notesByDate = new Map<string, TFile[]>();
+	/**
+	 * Each day a multi-day journal note holds, keyed by its full date: where that
+	 * day starts, so a log line can link to it (`[[2026-W43#^d1023|2026-10-23]]`)
+	 * instead of to the top of the week. `anchor` is null on a day line written
+	 * before the notes carried block IDs.
+	 */
+	private dayTargets = new Map<string, { file: TFile; anchor: string | null }>();
 	/** Exclusion fragments, tokenized once per rebuild rather than per file. */
 	private exclusionTokens: string[][] = [];
 	/** Lowercased marker tags, so group tags can be told from identification ones. */
@@ -146,6 +153,24 @@ export class PrmEngine {
 	}
 
 	/**
+	 * Where the given day lives inside a multi-day note, when it does: the note and
+	 * the day's block ID. null when no journal note holds that day.
+	 */
+	dayTarget(date: string): { file: TFile; anchor: string | null } | null {
+		return this.dayTargets.get(date) ?? null;
+	}
+
+	/**
+	 * The compiled day-line pattern of the source `file` belongs to, or null when it
+	 * has none — the same reading the index uses to date its days, so a writer finds
+	 * the day the index found.
+	 */
+	dayPatternFor(file: TFile): RegExp | null {
+		const source = this.settings.journalSources.find((s) => isInFolder(file.path, s.folder));
+		return source ? (this.dayPatterns.get(source) ?? null) : null;
+	}
+
+	/**
 	 * The date a note represents, if it's in a journal source at all.
 	 *
 	 * Public because writing into today's note needs the same date reading the index
@@ -234,6 +259,7 @@ export class PrmEngine {
 		diag.journalFilesScanned = journalCandidates.length;
 
 		this.notesByDate = new Map();
+		this.dayTargets = new Map();
 		const countMentions = this.settings.journalMentionsCountAsContact;
 		// One map for both passes: contact attribution and follow-ups resolve links
 		// the same way, and building it twice is pure duplication.
@@ -250,6 +276,7 @@ export class PrmEngine {
 			const bucket = this.notesByDate.get(date);
 			if (bucket) bucket.push(file);
 			else this.notesByDate.set(date, [file]);
+			this.recordDayTargets(file, date);
 
 			if (!countMentions || people.size === 0 || !cache || !linkMap) continue;
 			const dateAt = this.dayDating(file, date);
@@ -557,6 +584,23 @@ export class PrmEngine {
 	}
 
 	/**
+	 * Give each day of a multi-day note its full date (see `dayTargets`). A note whose
+	 * day lines aren't read yet contributes nothing this pass; the read is already
+	 * queued and the rebuild it triggers fills them in.
+	 */
+	private recordDayTargets(file: TFile, noteDate: string): void {
+		const source = this.settings.journalSources.find((s) => isInFolder(file.path, s.folder));
+		const pattern = source ? this.dayPatterns.get(source) : null;
+		if (!pattern) return;
+		const days = this.dayLines.get(file, pattern);
+		if (!days) return;
+		for (const day of days) {
+			const date = dateInWeek(noteDate, day.monthDay);
+			if (date) this.dayTargets.set(date, { file, anchor: day.anchor });
+		}
+	}
+
+	/**
 	 * Give each person their groups' contact dates.
 	 *
 	 * A group note is tracked like a person, and seeing the group (a dinner, a
@@ -786,6 +830,11 @@ export class PrmEngine {
 
 	/** The date a link target names, if it names one. */
 	private dateOfLinkTarget(target: string): string | null {
+		// `[[2026-W43#^d1023|2026-10-23]]` names the day inside the note, and
+		// getLinkpath drops the subpath, so the anchor is read from the target as written.
+		const day = this.dateOfDayAnchor(target);
+		if (day !== null) return day;
+
 		const linkpath = getLinkpath(target);
 		const basename = linkpath.slice(linkpath.lastIndexOf("/") + 1);
 		// No digits, no date — and most links in a person's note are to other people.
@@ -800,6 +849,25 @@ export class PrmEngine {
 		return this.settings.allowFallbackDateFormats
 			? parseJournalDate(basename, undefined, true)
 			: null;
+	}
+
+	/**
+	 * The date an anchor link names: `2026-W43#^d1023` is 2026-10-23. null when the
+	 * target has no `#^dMMDD` subpath, or the note it points at isn't a dated week.
+	 */
+	private dateOfDayAnchor(target: string): string | null {
+		const hash = target.indexOf("#");
+		if (hash === -1) return null;
+		const anchor = /^\^?d(\d{2})(\d{2})$/.exec(target.slice(hash + 1).split("|")[0].trim());
+		if (!anchor) return null;
+
+		const linkpath = getLinkpath(target);
+		const basename = linkpath.slice(linkpath.lastIndexOf("/") + 1);
+		for (const source of this.settings.journalSources) {
+			const week = parseJournalDate(basename, source.format, false);
+			if (week !== null) return dateInWeek(week, `${anchor[1]}-${anchor[2]}`);
+		}
+		return null;
 	}
 
 	/**

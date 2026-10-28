@@ -15,6 +15,7 @@
   ],
   "shared": {
     "link-suggest.js": "src/shared/link-suggest.js",
+    "format-version.js": "src/shared/format-version.js",
     "week-note.js": "src/shared/week-note.js",
     "startup-queue.js": "src/shared/startup-queue.js"
   },

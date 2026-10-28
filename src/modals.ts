@@ -18,6 +18,7 @@ import { addDays, formatCadence, formatDuration, isISODate, relativeToToday, tod
 import { trailingMonths } from "./calendar";
 import { loopFile, readLoops } from "./loops";
 import { attachLinkSuggest } from "./shared/link-suggest.js";
+import type { JournalLogStyle } from "./journal-write";
 
 /**
  * Reduce a person note to the part worth reading in a preview.
@@ -930,9 +931,42 @@ export class PromptModal extends PrmModal {
 
 // -------------------------------------------------------------- log contact modal
 
+/**
+ * How this one log reaches the day's journal. The setting's style is the default;
+ * the dialog asks per log because the same conversation can be a sentence in the
+ * day's log or the day's headline, and only the user knows which it was.
+ *
+ * Returns a setter for the line under it, so a caller that knows the date can say
+ * when that date has no note to write into — the one case the choice silently
+ * does nothing.
+ */
+function journalStyleEditor(
+	parent: HTMLElement,
+	value: JournalLogStyle,
+	onChange: (style: JournalLogStyle) => void,
+): (note: string) => void {
+	new Setting(parent)
+		.setName("In the day's journal")
+		.setDesc("How the contact shows in that day's week note.")
+		.addDropdown((d) =>
+			d
+				.addOption("line", "Plain line")
+				.addOption("highlight", "Met highlight")
+				.addOption("none", "Don't write it")
+				.setValue(value)
+				.onChange((next) => onChange(next as JournalLogStyle)),
+		);
+	const hint = parent.createDiv({ cls: "prm-journal-hint prm-muted" });
+	return (note: string) => hint.setText(note);
+}
+
 export class LogContactModal extends PrmModal {
 	private date = todayISO();
 	private note = "";
+	private journalStyle: JournalLogStyle;
+	private journalHint: ((note: string) => void) | null = null;
+	/** Drops a hint lookup that a newer date or style has made stale. */
+	private hintSeq = 0;
 	private saveButton: HTMLButtonElement | null = null;
 	private error: HTMLElement | null = null;
 
@@ -944,11 +978,15 @@ export class LogContactModal extends PrmModal {
 	constructor(
 		private plugin: PrmPlugin,
 		private record: PersonRecord | null,
-		private bulk?: { count: number; onSubmit: (date: string, note?: string) => void },
+		private bulk?: {
+			count: number;
+			onSubmit: (date: string, note?: string, journalStyle?: JournalLogStyle) => void;
+		},
 		/** Runs when the log is submitted, before it's written; never on Cancel. */
 		private onSubmitted?: () => void,
 	) {
 		super(plugin.app);
+		this.journalStyle = plugin.settings.journalLogStyle;
 	}
 
 	onOpen(): void {
@@ -970,6 +1008,7 @@ export class LogContactModal extends PrmModal {
 			onChange: (v) => {
 				this.date = v;
 				this.validate();
+				void this.updateJournalHint();
 			},
 		});
 
@@ -979,7 +1018,7 @@ export class LogContactModal extends PrmModal {
 		// so there's room to actually write and re-read what you wrote.
 		const noteField = noteEditor(contentEl, {
 			label: "Notes",
-			hint: "Optional. Written under the log entry, keeping your line breaks.",
+			hint: "Optional. Written under the log entry, keeping your line breaks. In the journal, a highlight gets one detail line per row.",
 			placeholder: "What did you talk about?",
 			value: "",
 			onChange: (v) => (this.note = v),
@@ -987,6 +1026,12 @@ export class LogContactModal extends PrmModal {
 			onSubmit: () => void this.submit(),
 		});
 		window.setTimeout(() => noteField.focus(), 0);
+
+		this.journalHint = journalStyleEditor(contentEl, this.journalStyle, (style) => {
+			this.journalStyle = style;
+			void this.updateJournalHint();
+		});
+		void this.updateJournalHint();
 
 		new Setting(contentEl)
 			.addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()))
@@ -1001,12 +1046,26 @@ export class LogContactModal extends PrmModal {
 		this.validate();
 	}
 
+	/** Say so when the chosen date has no note to write into — the one silent no-op. */
+	private async updateJournalHint(): Promise<void> {
+		const hint = this.journalHint;
+		if (!hint) return;
+		if (this.journalStyle === "none" || !isISODate(this.date)) {
+			hint("");
+			return;
+		}
+		const seq = ++this.hintSeq;
+		const day = await this.plugin.journalDayFor(this.date);
+		if (seq !== this.hintSeq || this.journalHint !== hint) return;
+		hint(day ? "" : `No week note holds ${this.date} — nothing will be written.`);
+	}
+
 	private async submit(): Promise<void> {
 		if (!isISODate(this.date)) return;
 		if (this.bulk) {
 			const { onSubmit } = this.bulk;
 			this.close();
-			onSubmit(this.date, this.note.trim() || undefined);
+			onSubmit(this.date, this.note.trim() || undefined, this.journalStyle);
 			return;
 		}
 		if (!this.record) return;
@@ -1014,7 +1073,9 @@ export class LogContactModal extends PrmModal {
 		this.onSubmitted?.();
 		this.close();
 		if (file instanceof TFile) {
-			await this.plugin.logContact(file, this.date, this.note.trim() || undefined);
+			await this.plugin.logContact(file, this.date, this.note.trim() || undefined, {
+				journalStyle: this.journalStyle,
+			});
 		}
 	}
 
@@ -1030,6 +1091,7 @@ export class LogContactModal extends PrmModal {
 	}
 
 	onClose(): void {
+		this.journalHint = null;
 		this.contentEl.empty();
 	}
 }
@@ -1046,6 +1108,11 @@ export class LogContactModal extends PrmModal {
 export class PersonActionsModal extends PrmModal {
 	private date = todayISO();
 	private note = "";
+	/** This log's shape in the day's journal; starts from the setting, chosen per log. */
+	private journalStyle: JournalLogStyle;
+	private journalHint: ((note: string) => void) | null = null;
+	/** Drops a hint lookup that a newer date, style or redraw has made stale. */
+	private hintSeq = 0;
 	private preview: Component | null = null;
 	private busy = false;
 	private errorEl: HTMLElement | null = null;
@@ -1071,6 +1138,7 @@ export class PersonActionsModal extends PrmModal {
 	) {
 		super(plugin.app);
 		this.modalEl.addClass("prm-reachout-modal");
+		this.journalStyle = plugin.settings.journalLogStyle;
 	}
 
 	onOpen(): void {
@@ -1177,6 +1245,7 @@ export class PersonActionsModal extends PrmModal {
 			onChange: (v) => {
 				this.date = v;
 				this.validate();
+				void this.updateJournalHint();
 			},
 		});
 
@@ -1197,6 +1266,12 @@ export class PersonActionsModal extends PrmModal {
 			this.focused = true;
 			window.setTimeout(() => noteField.focus(), 0);
 		}
+
+		this.journalHint = journalStyleEditor(contentEl, this.journalStyle, (style) => {
+			this.journalStyle = style;
+			void this.updateJournalHint();
+		});
+		void this.updateJournalHint();
 
 		// Logging is the reason the panel is open; the rest are one click away.
 		const primary = contentEl.createDiv({ cls: "prm-reachout-actions" });
@@ -1442,7 +1517,9 @@ export class PersonActionsModal extends PrmModal {
 		try {
 			const file = this.app.vault.getAbstractFileByPath(this.record.path);
 			if (file instanceof TFile) {
-				await this.plugin.logContact(file, this.date, this.note.trim() || undefined);
+				await this.plugin.logContact(file, this.date, this.note.trim() || undefined, {
+					journalStyle: this.journalStyle,
+				});
 			}
 			this.close();
 		} finally {
@@ -1461,9 +1538,24 @@ export class PersonActionsModal extends PrmModal {
 		}
 	}
 
+	/** Say so when the chosen date has no note to write into — the one silent no-op. */
+	private async updateJournalHint(): Promise<void> {
+		const hint = this.journalHint;
+		if (!hint) return;
+		if (this.journalStyle === "none" || !isISODate(this.date)) {
+			hint("");
+			return;
+		}
+		const seq = ++this.hintSeq;
+		const day = await this.plugin.journalDayFor(this.date);
+		if (seq !== this.hintSeq || this.journalHint !== hint) return;
+		hint(day ? "" : `No week note holds ${this.date} — nothing will be written.`);
+	}
+
 	onClose(): void {
 		this.unsubscribe?.();
 		this.unsubscribe = null;
+		this.journalHint = null;
 		this.preview?.unload();
 		this.preview = null;
 		this.contentEl.empty();
@@ -1485,6 +1577,13 @@ export class ReachOutModal extends PrmModal {
 	private busy = false;
 	/** Note drafts by person path, so moving back and forth doesn't lose typing. */
 	private drafts = new Map<string, string>();
+	/** This session's shape in the day's journal; one choice carries to the next person. */
+	private journalStyle: JournalLogStyle;
+	/** The session's day: fixed when it opens, so a run past midnight still logs the day it began. */
+	private date = todayISO();
+	private journalHint: ((note: string) => void) | null = null;
+	/** Drops a hint lookup that a newer style or redraw has made stale. */
+	private hintSeq = 0;
 
 	constructor(
 		private plugin: PrmPlugin,
@@ -1492,6 +1591,7 @@ export class ReachOutModal extends PrmModal {
 	) {
 		super(plugin.app);
 		this.modalEl.addClass("prm-reachout-modal");
+		this.journalStyle = plugin.settings.journalLogStyle;
 	}
 
 	onOpen(): void {
@@ -1512,7 +1612,22 @@ export class ReachOutModal extends PrmModal {
 		this.render();
 	}
 
+	/** Say so when today has no note to write into — the one silent no-op. */
+	private async updateJournalHint(): Promise<void> {
+		const hint = this.journalHint;
+		if (!hint) return;
+		if (this.journalStyle === "none" || !isISODate(this.date)) {
+			hint("");
+			return;
+		}
+		const seq = ++this.hintSeq;
+		const day = await this.plugin.journalDayFor(this.date);
+		if (seq !== this.hintSeq || this.journalHint !== hint) return;
+		hint(day ? "" : `No week note holds ${this.date} — nothing will be written.`);
+	}
+
 	onClose(): void {
+		this.journalHint = null;
 		this.preview?.unload();
 		this.preview = null;
 		this.contentEl.empty();
@@ -1579,7 +1694,9 @@ export class ReachOutModal extends PrmModal {
 			try {
 				const note = (this.drafts.get(record.path) ?? "").trim();
 				if (file instanceof TFile) {
-					await this.plugin.logContact(file, todayISO(), note || undefined);
+					await this.plugin.logContact(file, this.date, note || undefined, {
+						journalStyle: this.journalStyle,
+					});
 				}
 				this.drafts.delete(record.path);
 				this.handled.add(record.path);
@@ -1598,6 +1715,12 @@ export class ReachOutModal extends PrmModal {
 			onSubmit: () => void logIt(),
 			app: this.app,
 		});
+
+		this.journalHint = journalStyleEditor(contentEl, this.journalStyle, (style) => {
+			this.journalStyle = style;
+			void this.updateJournalHint();
+		});
+		void this.updateJournalHint();
 
 		const actions = contentEl.createDiv({ cls: "prm-reachout-actions" });
 

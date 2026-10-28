@@ -28,7 +28,8 @@ import { coerceISODate, formatCadence, formatDuration, isISODate, todayISO } fro
 import type { LoopRef, PersonRecord } from "./types";
 import { appendFollowUp, appendUnder, hasHeading, setTask } from "./loops";
 import { findHeading, sectionEnd, shallowestHeadingLevel } from "./markdown";
-import { findLogEntry, mergeLogNote } from "./contact-log";
+import { findLogEntry, mergeLogNote, relinkLogLine } from "./contact-log";
+import { addJournalEntry, type JournalLogStyle } from "./journal-write";
 import {
 	asDisplay,
 	contactFields,
@@ -46,6 +47,7 @@ import { defaultPersonNote, renderTemplate, sanitizeNoteName } from "./templates
 import { reminderBuckets, shouldShowReminder } from "./reminder";
 import { ReminderPanel } from "./reminder-panel";
 import { startupQueue } from "./shared/startup-queue.js";
+import { CONTRACT_VERSION } from "./shared/format-version.js";
 
 interface WriteOptions {
 	silent?: boolean;
@@ -68,6 +70,7 @@ function setLastContacted(fm: MutableFrontmatter, date: string): void {
 }
 
 export default class PrmPlugin extends Plugin {
+	readonly contractVersion = CONTRACT_VERSION;
 	settings!: PrmSettings;
 	engine!: PrmEngine;
 	undo!: UndoManager;
@@ -142,6 +145,8 @@ export default class PrmPlugin extends Plugin {
 
 	onunload(): void {
 		this.unloaded = true;
+		// A pop-up still waiting in the shared queue must never open from a dead plugin.
+		startupQueue().remove("personal-crm");
 		// The panel lives on the document body, outside anything Obsidian tears down.
 		this.reminderPanel?.close();
 
@@ -213,6 +218,11 @@ export default class PrmPlugin extends Plugin {
 		}
 		if (!Array.isArray(this.settings.journalSources)) {
 			this.settings.journalSources = DEFAULT_SETTINGS.journalSources.map((s) => ({ ...s }));
+		}
+		// A hand-edited or older data.json may hold anything here; only the three
+		// shapes the writer knows are usable.
+		if (!["line", "highlight", "none"].includes(this.settings.journalLogStyle)) {
+			this.settings.journalLogStyle = DEFAULT_SETTINGS.journalLogStyle;
 		}
 
 		// Normalize here, not just in the settings UI: a data.json can be hand-edited
@@ -392,9 +402,14 @@ export default class PrmPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: "relink-log-dates",
+			name: "Relink contact-log dates to their day",
+			callback: () => void this.relinkLogDates(),
+		});
+
+		this.addCommand({
 			id: "set-tier-current",
-			name: "Set contact cadence for this person",
-			checkCallback: (checking) => {
+			name: "Set contact cadence for this person",			checkCallback: (checking) => {
 				const file = this.app.workspace.getActiveFile();
 				if (!file) return false;
 				const record = this.engine.get(file.path);
@@ -760,14 +775,20 @@ export default class PrmPlugin extends Plugin {
 	 *
 	 * Queued per path: our own multi-step actions must not interleave, or the
 	 * snapshots capture a mixture of two changes and one undo reverses both.
+	 *
+	 * `also` files are snapshotted too, in the same entry: a log that writes into the
+	 * day's journal is one action to the user, so one undo takes both back.
 	 */
 	private async tracked(
 		file: TFile,
 		label: string,
 		mutate: () => Promise<void>,
+		also: TFile[] = [],
 	): Promise<UndoEntry | null> {
 		return this.writes.run(file.path, async () => {
 			const before = await this.app.vault.read(file);
+			const alsoBefore = new Map<string, string>();
+			for (const extra of also) alsoBefore.set(extra.path, await this.app.vault.read(extra));
 			try {
 				await mutate();
 			} finally {
@@ -775,7 +796,15 @@ export default class PrmPlugin extends Plugin {
 				// it applied, and without this that partial edit had no undo entry at
 				// all. `record` returns null for a no-op, so a clean failure adds nothing.
 				const after = await this.app.vault.read(file);
-				this.undo.record(label, [{ path: file.path, before, after }]);
+				const files: FileSnapshot[] = [{ path: file.path, before, after }];
+				for (const extra of also) {
+					files.push({
+						path: extra.path,
+						before: alsoBefore.get(extra.path) ?? "",
+						after: await this.app.vault.read(extra),
+					});
+				}
+				this.undo.record(label, files);
 			}
 			return this.undo.peekUndo();
 		});
@@ -789,15 +818,21 @@ export default class PrmPlugin extends Plugin {
 	 * Each note is snapshotted inside its own queued turn, so a concurrent write to
 	 * one of them can't be absorbed into this entry — and one failure doesn't lose
 	 * the notes that already succeeded, since they are recorded either way.
+	 *
+	 * `also` files (the day's journal) are snapshotted once around the whole run and
+	 * join the same undo entry, but don't count as changed notes.
 	 */
 	private async trackedMany(
 		paths: string[],
 		label: string,
 		mutate: (file: TFile) => Promise<void>,
 		onProgress?: (done: number, total: number) => void,
+		also: TFile[] = [],
 	): Promise<BulkResult> {
 		const snapshots: FileSnapshot[] = [];
 		const failed: string[] = [];
+		const alsoBefore = new Map<string, string>();
+		for (const extra of also) alsoBefore.set(extra.path, await this.app.vault.read(extra));
 
 		for (let i = 0; i < paths.length; i++) {
 			const file = this.app.vault.getAbstractFileByPath(paths[i]);
@@ -821,12 +856,21 @@ export default class PrmPlugin extends Plugin {
 			if (i % 25 === 24) await new Promise((r) => window.setTimeout(r, 0));
 		}
 
+		const changed = snapshots.length;
+		for (const extra of also) {
+			snapshots.push({
+				path: extra.path,
+				before: alsoBefore.get(extra.path) ?? "",
+				after: await this.app.vault.read(extra),
+			});
+		}
+
 		const entry = snapshots.length > 0 ? this.undo.record(label, snapshots) : null;
 		this.engine.rebuild();
 		this.refreshStatusBar();
 
 		const message = [
-			snapshots.length === 0 ? "Nothing needed changing" : label,
+			changed === 0 ? "Nothing needed changing" : label,
 			failed.length > 0 ? `${failed.length} failed` : "",
 		]
 			.filter((p) => p.length > 0)
@@ -834,22 +878,39 @@ export default class PrmPlugin extends Plugin {
 		if (entry) this.noticeWithUndo(message, entry);
 		else new Notice(`${message}.`);
 
-		return { changed: snapshots.length, failed };
+		return { changed, failed };
 	}
 
-	async bulkLogContact(paths: string[], date = todayISO(), note?: string): Promise<BulkResult> {
+	async bulkLogContact(
+		paths: string[],
+		date = todayISO(),
+		note?: string,
+		journalStyle?: JournalLogStyle,
+	): Promise<BulkResult> {
 		if (!isISODate(date)) {
 			new Notice(`"${date}" isn't a valid date.`);
 			return { changed: 0, failed: [] };
 		}
+		const style = journalStyle ?? this.settings.journalLogStyle;
+		const day = style === "none" ? null : await this.journalDayFor(date);
 		const label = `Log contact with ${describeCount(paths.length, "person", "people")}`;
-		return this.trackedMany(paths, label, async (file) => {
-			if (this.settings.logToBody) await this.appendBodyLog(file, date, note);
-			await this.app.fileManager.processFrontMatter(file, (fm: MutableFrontmatter) => {
-				fm[FRONTMATTER_KEYS.lastContacted] = date;
-				delete fm[FRONTMATTER_KEYS.snoozeUntil];
-			});
-		});
+		return this.trackedMany(
+			paths,
+			label,
+			async (file) => {
+				if (this.settings.logToBody) await this.appendBodyLog(file, date, note);
+				await this.app.fileManager.processFrontMatter(file, (fm: MutableFrontmatter) => {
+					fm[FRONTMATTER_KEYS.lastContacted] = date;
+					delete fm[FRONTMATTER_KEYS.snoozeUntil];
+				});
+				if (day && day.file.path !== file.path) {
+					const optedOut = this.engine.get(file.path)?.ignoreJournal === true;
+					if (!optedOut) await this.writeJournalEntry(day, date, file.basename, style, note);
+				}
+			},
+			undefined,
+			day ? [day.file] : [],
+		);
 	}
 
 	async bulkSetTier(paths: string[], tierId: string | null): Promise<BulkResult> {
@@ -1131,37 +1192,146 @@ export default class PrmPlugin extends Plugin {
 	 * day as often as it is edited) the log keeps one bullet a day: a day it already has gets
 	 * the note there, replacing `previous` (the day's earlier note), and an older day never
 	 * moves the last contact back. Without it every call adds a bullet, as upstream does.
+	 *
+	 * Without `merge` the contact also reaches the day's journal note (see journal-write.ts):
+	 * `journalStyle` picks this log's shape, and the setting's is the default for the one-click
+	 * paths that have no dialog to ask in.
 	 */
 	async logContact(
 		file: TFile,
 		date = todayISO(),
 		note?: string,
-		{ merge = false, previous }: { merge?: boolean; previous?: string } = {},
+		{
+			merge = false,
+			previous,
+			journalStyle,
+		}: { merge?: boolean; previous?: string; journalStyle?: JournalLogStyle } = {},
 	): Promise<void> {
 		if (!isISODate(date)) {
 			new Notice(`"${date}" isn't a valid date (expected YYYY-MM-DD).`);
 			return;
 		}
 
+		// The Journal plugin's Day entry is already writing that day; a line back into it
+		// would duplicate what it just read. Someone whose journal mentions are opted out
+		// of gets no line either: it would never count, and the opt-out is about their
+		// presence in the journal, not only about counting it.
+		const optedOut = this.engine.get(file.path)?.ignoreJournal === true;
+		const style: JournalLogStyle = merge
+			? "none"
+			: (journalStyle ?? this.settings.journalLogStyle);
+		const day = style === "none" || optedOut ? null : await this.journalDayFor(date);
+		const also = day && day.file.path !== file.path ? [day.file] : [];
+
 		const label = `Log contact with ${file.basename}`;
+		let wroteJournal = false;
 		try {
-			const entry = await this.tracked(file, label, async () => {
-				// Frontmatter first. The failure this guards against is malformed YAML —
-				// which is exactly what processFrontMatter throws on — and with the body
-				// log written first, that left the bullet applied with no undo entry, so
-				// every retry added another copy.
-				await this.app.fileManager.processFrontMatter(file, (fm: MutableFrontmatter) => {
-					if (merge) setLastContacted(fm, date);
-					else fm[FRONTMATTER_KEYS.lastContacted] = date;
-					// An explicit "I've handled this" makes any snooze meaningless.
-					delete fm[FRONTMATTER_KEYS.snoozeUntil];
-				});
-				if (this.settings.logToBody) await this.appendBodyLog(file, date, note, merge ? { previous } : null);
-			});
-			this.afterWrite(`Logged contact with ${file.basename}.`, entry);
+			const entry = await this.tracked(
+				file,
+				label,
+				async () => {
+					// Frontmatter first. The failure this guards against is malformed YAML —
+					// which is exactly what processFrontMatter throws on — and with the body
+					// log written first, that left the bullet applied with no undo entry, so
+					// every retry added another copy.
+					await this.app.fileManager.processFrontMatter(file, (fm: MutableFrontmatter) => {
+						if (merge) setLastContacted(fm, date);
+						else fm[FRONTMATTER_KEYS.lastContacted] = date;
+						// An explicit "I've handled this" makes any snooze meaningless.
+						delete fm[FRONTMATTER_KEYS.snoozeUntil];
+					});
+					if (this.settings.logToBody) await this.appendBodyLog(file, date, note, merge ? { previous } : null);
+					if (also.length > 0) {
+						wroteJournal = await this.writeJournalEntry(day!, date, file.basename, style, note);
+					}
+				},
+				also,
+			);
+			const inJournal = wroteJournal ? " Also in the day's journal." : "";
+			this.afterWrite(`Logged contact with ${file.basename}.${inJournal}`, entry);
 		} catch (err) {
 			this.reportWriteError(file, err);
 		}
+	}
+
+	/**
+	 * The day's journal note and the pattern that finds the day inside it, when one
+	 * holds that date. Only a multi-day note — a week note — has a day section a line
+	 * can go into; a note titled by the date is somebody else's prose.
+	 *
+	 * Week-note day lines are read in the background, so this waits for them: without
+	 * them the index doesn't know which note holds the day. Public because the log
+	 * dialogs say so when a date has no note to write into.
+	 */
+	async journalDayFor(
+		date: string,
+	): Promise<{ file: TFile; pattern: RegExp } | null> {
+		await this.engine.whenDayLinesRead();
+		const target = this.engine.dayTarget(date);
+		if (!target) return null;
+		const pattern = this.engine.dayPatternFor(target.file);
+		return pattern ? { file: target.file, pattern } : null;
+	}
+
+	private async writeJournalEntry(
+		day: { file: TFile; pattern: RegExp },
+		date: string,
+		name: string,
+		style: JournalLogStyle,
+		note?: string,
+	): Promise<boolean> {
+		let changed = false;
+		await this.writes.run(day.file.path, async () => {
+			await this.app.vault.process(day.file, (data) => {
+				const next = addJournalEntry(data, day.pattern, date, name, style, note ?? "");
+				changed = next !== null && next !== data;
+				return next ?? data;
+			});
+		});
+		return changed;
+	}
+
+	/**
+	 * Rewrite every contact-log date to what `dateToken` writes today, so an old log
+	 * points at the day it happened instead of at a bare date. One undoable step;
+	 * notes whose dates already match are not touched.
+	 */
+	async relinkLogDates(): Promise<void> {
+		if (!this.settings.linkDailyNoteInLog) {
+			new Notice("Log dates aren't linked (see the setting); enable it first.");
+			return;
+		}
+		// Exact days come from the week notes, whose day lines load in the background.
+		await this.engine.whenDayLinesRead();
+
+		const heading = this.settings.bodyLogHeading;
+		let dates = 0;
+		await this.trackedMany(
+			this.engine.all().map((record) => record.path),
+			"Relink contact-log dates",
+			async (file) => {
+				await this.app.vault.process(file, (data) => {
+					const match = findHeading(data, heading);
+					if (!match) return data;
+					const start = match.afterLine;
+					const end = sectionEnd(data, match);
+					let changed = 0;
+					const body = data
+						.slice(start, end)
+						.split("\n")
+						.map((line) => {
+							const next = relinkLogLine(line, (date) => this.dateToken(date));
+							if (next !== line) changed++;
+							return next;
+						})
+						.join("\n");
+					if (changed === 0) return data;
+					dates += changed;
+					return data.slice(0, start) + body + data.slice(end);
+				});
+			},
+		);
+		if (dates === 0) new Notice("Every log date already points at its day.");
 	}
 
 	async setTier(file: TFile, tierId: string | null, opts: WriteOptions = {}): Promise<void> {
@@ -1408,16 +1578,26 @@ export default class PrmPlugin extends Plugin {
 	}
 
 	/**
-	 * A log line's date, linked to that day's note when one exists under exactly
-	 * that name. Otherwise the plain date — a bracketed link to a note that will
-	 * never exist just litters the graph with phantoms.
+	 * A log line's date: linked to the exact day when one can be named.
+	 *
+	 * A note titled by the date is the obvious target. Failing that, the day may live
+	 * inside a multi-day note (a week note), and then the link carries the day's block
+	 * ID so it opens that day instead of the top of the week. Otherwise the plain date:
+	 * a bracketed link to a note that will never exist just litters the graph with
+	 * phantoms.
 	 */
 	private dateToken(date: string): string {
 		if (!this.settings.linkDailyNoteInLog) return date;
 		if (this.engine.hasNoteTitledDate(date)) return `[[${date}]]`;
 
+		const day = this.engine.dayTarget(date);
+		if (day) {
+			const target = day.anchor ? `${day.file.basename}#^${day.anchor}` : day.file.basename;
+			// Keep the display text a date even when the note is named something else.
+			return `[[${target}|${date}]]`;
+		}
+
 		const note = this.engine.noteForDate(date);
-		// Keep the display text a date even when the note is named something else.
 		if (note) return `[[${note.basename}|${date}]]`;
 
 		// No note for that day. A bare date is tidier, but nothing can read it back
@@ -1521,12 +1701,15 @@ export default class PrmPlugin extends Plugin {
 		if (!shouldShowReminder(this.settings.lastReminderAt, now, this.settings.reminderIntervalHours)) return;
 		// An interval with nobody due isn't spent: someone may still come due by a later open.
 		if (this.reminderBuckets().total === 0) return;
-		this.settings.lastReminderAt = now;
-		// Straight to disk: saveSettings would reindex the vault for a timestamp.
-		void this.saveData(this.settings);
 		startupQueue().add("personal-crm", 10, async () => {
 			const panel = this.openReminder();
-			if (panel) await panel.closed;
+			if (!panel) return;
+			// Recorded when it actually shows: a queued reminder that never reaches the screen must
+			// not spend the interval (2026-10-20).
+			this.settings.lastReminderAt = Date.now();
+			// Straight to disk: saveSettings would reindex the vault for a timestamp.
+			void this.saveData(this.settings);
+			await panel.closed;
 		});
 	}
 
@@ -1543,12 +1726,14 @@ export default class PrmPlugin extends Plugin {
 	openReminder(): ReminderPanel | null {
 		const buckets = this.reminderBuckets();
 		if (this.unloaded || buckets.total === 0) return null;
-		this.reminderPanel?.close();
+		const previous = this.reminderPanel;
 		const panel = new ReminderPanel(this, buckets, () => {
 			if (this.reminderPanel === panel) this.reminderPanel = null;
 		});
 		this.reminderPanel = panel;
 		panel.open();
+		// A panel the startup queue is waiting on hands its turn to the replacement.
+		previous?.replaceWith(panel);
 		return panel;
 	}
 }

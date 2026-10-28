@@ -146,6 +146,20 @@ async function boot(build, settings = {}) {
     });
   }
 
+  console.log("\nAn anchor link in a log line dates the day inside the week note");
+  {
+    const { plugin } = await boot((v) => {
+      v.addFile("People/Sam.md", "---\ntags:\n  - people\nprm-tier: casual\n---\n" +
+        "# Contact log\n" +
+        "- [[2026-W43#^d1023|2026-10-23]] — call\n" +
+        "- [[2026-W43|2026-10-19]] — the week itself\n");
+      v.addFile("Weeks/2026-W43.md", "*10-19* ^d1019\nquiet\n\n*10-23* ^d1023\ncall\n");
+    }, { journalSources: [{ folder: "Weeks", format: "GGGG-[W]WW",
+      dayLine: "^\\*(\\d{2}-\\d{2})\\*(?:\\s+\\^d\\d{4})?\\s*$" }] });
+    check("the anchor names its day, not the week's Monday", () =>
+      assert.deepStrictEqual(plugin.engine.get("People/Sam.md").contactDates, ["2026-10-23", "2026-10-19"]));
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
 })();

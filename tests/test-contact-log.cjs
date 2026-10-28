@@ -70,6 +70,85 @@ const check=(n,f)=>{try{f();console.log(`  ✓ ${n}`);passed++;}catch(e){console
   check("without merge an older day still sets the last contact (a wrong date can be corrected)", () =>
     assert.match(text().split("---")[1], /prm-last-contacted: ['"]?2026-08-01/));
 
+  console.log("\nLogging a day that lives in a week note links back to that day");
+  {
+    const w = makeVault();
+    w.addFile("People/Sam.md", "---\ntags:\n  - people\nprm-tier: close\n---\n");
+    w.addFile("Weeks/2026-W43.md", "*10-19* ^d1019\nquiet\n\n*10-23* ^d1023\ncall\n");
+    const withWeeks = new PluginClass(w.app, { id: "personal-crm" });
+    withWeeks.__data = { configured: true, notifyOnStartup: false, showStatusBar: false, logToBody: true,
+      linkDailyNoteInLog: true, personFolders: ["People"],
+      journalSources: [{ folder: "Weeks", format: "GGGG-[W]WW", dayLine: "^\\*(\\d{2}-\\d{2})\\*(?:\\s+\\^d\\d{4})?\\s*$" }] };
+    await withWeeks.onload();
+    withWeeks.engine.rebuild();
+    await withWeeks.engine.whenDayLinesRead();
+    const sam = w.app.vault.getAbstractFileByPath("People/Sam.md");
+    await withWeeks.logContact(sam, "2026-10-23", "talked");
+    check("the bullet jumps to the day's anchor", () =>
+      assert.ok(w.store.get("People/Sam.md").includes("- [[2026-W43#^d1023|2026-10-23]] — talked"), w.store.get("People/Sam.md")));
+    check("and the day it names is read back", () =>
+      assert.ok(withWeeks.engine.get("People/Sam.md").contactDates.includes("2026-10-23")));
+  }
+  {
+    const w = makeVault();
+    w.addFile("People/Sam.md", "---\ntags:\n  - people\nprm-tier: close\n---\n");
+    w.addFile("Weeks/2026-W43.md", "*10-19*\nquiet\n\n*10-23*\ncall\n");
+    const noAnchors = new PluginClass(w.app, { id: "personal-crm" });
+    noAnchors.__data = { configured: true, notifyOnStartup: false, showStatusBar: false, logToBody: true,
+      linkDailyNoteInLog: true, personFolders: ["People"],
+      journalSources: [{ folder: "Weeks", format: "GGGG-[W]WW", dayLine: "^\\*(\\d{2}-\\d{2})\\*(?:\\s+\\^d\\d{4})?\\s*$" }] };
+    await noAnchors.onload();
+    noAnchors.engine.rebuild();
+    await noAnchors.engine.whenDayLinesRead();
+    const sam = w.app.vault.getAbstractFileByPath("People/Sam.md");
+    await noAnchors.logContact(sam, "2026-10-23", "talked");
+    check("a day line without an anchor still links the week", () =>
+      assert.ok(w.store.get("People/Sam.md").includes("- [[2026-W43|2026-10-23]] — talked"), w.store.get("People/Sam.md")));
+  }
+
+  console.log("\nRelinking old log dates to the day they name");
+  {
+    const w = makeVault();
+    w.addFile("People/Sam.md", "---\ntags:\n  - people\nprm-tier: close\n---\n" +
+      "# Facts\n- seen on 2026-10-23 elsewhere\n\n" +
+      "## Contact log\n" +
+      "- 2026-10-23 — call\n" +
+      "- [[2026-10-19]] — older\n" +
+      "- 2026-10-21 — bare, no anchor\n" +
+      "- [[2026-10-20, standup|2026-10-20]] — an event note\n" +
+      "- [[2026-10-18]] — no note that day\n\n" +
+      "## Later\n- 2026-10-23 — not a log line\n");
+    w.addFile("Weeks/2026-W43.md", "*10-19* ^d1019\nquiet\n\n*10-20*\nno anchor\n\n*10-21*\nplain\n\n*10-23* ^d1023\ncall\n");
+    const relinker = new PluginClass(w.app, { id: "personal-crm" });
+    relinker.__data = { configured: true, notifyOnStartup: false, showStatusBar: false, logToBody: true,
+      linkDailyNoteInLog: true, personFolders: ["People"],
+      journalSources: [{ folder: "Weeks", format: "GGGG-[W]WW", dayLine: "^\\*(\\d{2}-\\d{2})\\*(?:\\s+\\^d\\d{4})?\\s*$" }] };
+    await relinker.onload();
+    relinker.engine.rebuild();
+    await relinker.engine.whenDayLinesRead();
+    const before = w.store.get("People/Sam.md");
+
+    await relinker.relinkLogDates();
+    const after = w.store.get("People/Sam.md");
+
+    check("a bare date becomes the week's day link", () =>
+      assert.ok(after.includes(`- [[2026-W43#^d1023|2026-10-23]] — call`), after));
+    check("a date link to its own note becomes the day anchor", () =>
+      assert.ok(after.includes(`- [[2026-W43#^d1019|2026-10-19]] — older`), after));
+    check("a day whose line has no anchor links the week", () =>
+      assert.ok(after.includes(`- [[2026-W43|2026-10-21]] — bare, no anchor`), after));
+    check("a link to another note that displays a date is left alone", () =>
+      assert.ok(after.includes(`- [[2026-10-20, standup|2026-10-20]] — an event note`), after));
+    check("a date no journal note holds keeps its bare text", () =>
+      assert.ok(after.includes(`- 2026-10-18 — no note that day`), after));
+    check("prose and other sections are untouched", () =>
+      assert.ok(after.includes("# Facts\n- seen on 2026-10-23 elsewhere\n"), after));
+    check("and a same-dated line under another heading", () =>
+      assert.ok(after.includes("## Later\n- 2026-10-23 — not a log line"), after));
+    await relinker.performUndo();
+    check("undo puts every date back", () => assert.strictEqual(w.store.get("People/Sam.md"), before));
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed) process.exit(1);
 })().catch(e => { console.error("SUITE ERROR:", e.stack); process.exit(1); });
