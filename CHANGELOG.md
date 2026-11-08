@@ -47,6 +47,13 @@ All notable changes to Personal CRM. Versions follow
 
 ### Fixed
 
+- **The reminder stamp no longer travels between devices.** `lastReminderAt` used to
+  live in `data.json`, which both devices rewrite on start; a git merge of that one
+  line left conflict markers, Obsidian couldn't parse the settings file, and the
+  plugin reloaded defaults — including a guessed people folder (2026-11-04). The
+  stamp now lives in Obsidian's per-device local storage
+  (`App.loadLocalStorage`), an old value is adopted once and removed from `data.json`,
+  and `data.json` changes only when a setting does.
 - **A cadence reads as set.** A 45-day tier showed as "every 2mo"; it now reads "every
   45d". Whole weeks, months and years keep their unit. Rounded durations (lateness,
   usual gaps) stay in weeks up to two months, so 45 days is "6w".

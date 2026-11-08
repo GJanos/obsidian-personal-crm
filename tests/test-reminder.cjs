@@ -141,7 +141,7 @@ function seen(v, name, n) {
     check("the pop-up takes its turn in the shared startup queue, first", () =>
       assert.deepStrictEqual(queued, [{ id: "personal-crm", priority: 10 }]));
     check("the first open shows the pop-up", () => assert.strictEqual(opened.length, 1));
-    check("and remembers when", () => assert.ok(Date.now() - plugin.settings.lastReminderAt < 5000));
+    check("and remembers when", () => assert.ok(Date.now() - plugin.lastReminderAt < 5000));
     check("no text notice any more", () =>
       assert.ok(!notices.some((n) => String(n).includes("reach out to"))));
     const content = JSON.stringify(opened[0].el, (k, val) => (k === "parent" ? undefined : val));
@@ -175,7 +175,7 @@ function seen(v, name, n) {
   {
     const { plugin } = await boot((v) => seen(v, "Akos", 20), {}, { take: false });
     check("a queued reminder isn't counted as shown before it shows", () =>
-      assert.ok(!plugin.settings.lastReminderAt));
+      assert.ok(!plugin.lastReminderAt));
     check("unloading drops the queued reminder", () => {
       assert.strictEqual(global.window.__pluginStartupQueue.items.length, 1);
       plugin.onunload();
@@ -186,7 +186,7 @@ function seen(v, name, n) {
     const { plugin } = await boot((v) => seen(v, "Akos", 20), {}, { take: false });
     const { shown } = takeQueue();
     await new Promise((r) => setTimeout(r, 20));
-    check("once it shows, the interval starts", () => assert.ok(plugin.settings.lastReminderAt > 0));
+    check("once it shows, the interval starts", () => assert.ok(plugin.lastReminderAt > 0));
     plugin.reminderPanel?.close();
     await shown[0];
   }
@@ -273,7 +273,7 @@ function seen(v, name, n) {
     check("it listens for the window coming back", () => assert.strictEqual(focus.length, 1));
     focus[0].handler();
     check("which stays quiet within the interval", () => assert.strictEqual(opened.length, 0));
-    plugin.settings.lastReminderAt = Date.now() - 9 * 3600000;
+    plugin.lastReminderAt = Date.now() - 9 * 3600000;
     focus[0].handler();
     takeQueue();
     check("and shows it once the interval has passed", () => assert.strictEqual(opened.length, 1));
@@ -282,8 +282,17 @@ function seen(v, name, n) {
     opened[0].close();
   }
   {
-    const { opened } = await boot((v) => seen(v, "Akos", 20), { lastReminderDate: todayLocal() });
+    const { plugin, opened } = await boot((v) => seen(v, "Akos", 20), { lastReminderDate: todayLocal() });
     check("seen today under the old once-a-day stamp counts as seen", () => assert.strictEqual(opened.length, 0));
+    check("and the retired date leaves data.json with the rewrite", () =>
+      assert.strictEqual(plugin.__data.lastReminderDate, undefined));
+  }
+  {
+    const { plugin } = await boot((v) => seen(v, "Akos", 20), { lastReminderAt: Date.now() - 60000 });
+    check("the retired settings stamp moves to device-local storage and leaves data.json", () => {
+      assert.ok(plugin.lastReminderAt > 0);
+      assert.strictEqual(plugin.__data.lastReminderAt, undefined);
+    });
   }
   {
     const { plugin: big } = await boot(() => {}, { reminderIntervalHours: 1000 });

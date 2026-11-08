@@ -48,6 +48,7 @@ writes: modals/view ──► main.ts ──► writes.ts (queue) ──► vaul
 | `calendar-view.ts` | The calendar view built on `calendar.ts` |
 | `modals.ts` | Every dialog: person panel, log, reach-out, triage, pickers |
 | `loops.ts` | Follow-up tasks: locating, completing, appending |
+| `reminder-stamp.ts` | The startup reminder's last-shown stamp, in device-local storage (never `data.json`) |
 | `undo.ts` | Snapshot undo/redo with pre-flight validation and rollback |
 | `writes.ts` | Per-path write serialisation (`WriteQueue`) |
 | `dates.ts` | UTC-anchored day arithmetic and ISO validation |

@@ -46,6 +46,7 @@ import {
 } from "./frontmatter";
 import { defaultPersonNote, renderTemplate, sanitizeNoteName } from "./templates";
 import { reminderBuckets, shouldShowReminder } from "./reminder";
+import { loadReminderStamp, saveReminderStamp } from "./reminder-stamp";
 import { ReminderPanel } from "./reminder-panel";
 import { startupQueue } from "./shared/startup-queue.js";
 import { CONTRACT_VERSION } from "./shared/format-version.js";
@@ -80,6 +81,12 @@ export default class PrmPlugin extends Plugin {
 	private statusTextEl: HTMLElement | null = null;
 	private firstBuildDone = false;
 	private reminderPanel: ReminderPanel | null = null;
+	/**
+	 * When the startup reminder last showed (epoch ms), for this device only. Kept
+	 * out of `settings` on purpose: both devices write it at start, and a git merge
+	 * of that line used to invalidate the whole data.json (see reminder-stamp.ts).
+	 */
+	lastReminderAt = 0;
 	/**
 	 * Set by `onunload`. The startup reminder waits on week-note day lines, which can
 	 * settle after a reload or disable; a panel opened then has nobody left to close it.
@@ -200,7 +207,29 @@ export default class PrmPlugin extends Plugin {
 		const raw: unknown = await this.loadData();
 		const stored: Record<string, unknown> =
 			typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+		// The reminder stamp lives in device-local storage since 2026-11-06: both
+		// devices used to rewrite it in data.json, and a git merge of that one line
+		// invalidated the whole settings file. Adopt an old value once, then drop it.
+		const legacyStamp = Number(stored["lastReminderAt"]);
+		const hadLegacyStamp = "lastReminderAt" in stored;
+		delete stored["lastReminderAt"];
 		this.settings = { ...DEFAULT_SETTINGS, ...(stored as Partial<PrmSettings>) };
+		// The once-a-day gate became an interval. Seen today under the old stamp counts as seen now.
+		// Both retired keys must be dropped before the rewrite below, or the rewrite writes them back.
+		const oldReminderDate = stored["lastReminderDate"];
+		const hadOldReminderDate = "lastReminderDate" in stored;
+		delete (this.settings as unknown as Record<string, unknown>)["lastReminderDate"];
+		this.lastReminderAt = loadReminderStamp(this.app);
+		if (!this.lastReminderAt && Number.isFinite(legacyStamp) && legacyStamp > 0) {
+			this.lastReminderAt = legacyStamp;
+			saveReminderStamp(this.app, legacyStamp);
+		}
+		if (!this.lastReminderAt && oldReminderDate === todayISO()) {
+			this.lastReminderAt = Date.now();
+			saveReminderStamp(this.app, this.lastReminderAt);
+		}
+		// Rewrite data.json once so the retired keys stop travelling between devices.
+		if (hadLegacyStamp || hadOldReminderDate) await this.saveData(this.settings);
 
 		// Repair anything a hand-edited or older data.json might have dropped.
 		if (!Array.isArray(this.settings.tiers) || this.settings.tiers.length === 0) {
@@ -240,11 +269,6 @@ export default class PrmPlugin extends Plugin {
 		if (typeof oldPeople === "string" && oldPeople.length > 0 && !stored["personFolders"]) {
 			this.settings.personFolders = [cleanFolderPath(oldPeople)];
 		}
-		// The once-a-day gate became an interval. Seen today under the old stamp counts as seen now.
-		const oldReminderDate = stored["lastReminderDate"];
-		delete (this.settings as unknown as Record<string, unknown>)["lastReminderDate"];
-		if (!Number.isFinite(this.settings.lastReminderAt)) this.settings.lastReminderAt = 0;
-		if (oldReminderDate === todayISO() && !this.settings.lastReminderAt) this.settings.lastReminderAt = Date.now();
 		// The slider's range, 1 to 24 whole hours, also for a hand-edited data.json.
 		const hours = Number(this.settings.reminderIntervalHours);
 		this.settings.reminderIntervalHours = Number.isFinite(hours)
@@ -1698,17 +1722,16 @@ export default class PrmPlugin extends Plugin {
 	private startupReminder(): void {
 		if (!this.settings.notifyOnStartup || this.reminderPanel) return;
 		const now = Date.now();
-		if (!shouldShowReminder(this.settings.lastReminderAt, now, this.settings.reminderIntervalHours)) return;
+		if (!shouldShowReminder(this.lastReminderAt, now, this.settings.reminderIntervalHours)) return;
 		// An interval with nobody due isn't spent: someone may still come due by a later open.
 		if (this.reminderBuckets().total === 0) return;
 		startupQueue().add("personal-crm", 10, async () => {
 			const panel = this.openReminder();
 			if (!panel) return;
 			// Recorded when it actually shows: a queued reminder that never reaches the screen must
-			// not spend the interval (2026-10-20).
-			this.settings.lastReminderAt = Date.now();
-			// Straight to disk: saveSettings would reindex the vault for a timestamp.
-			void this.saveData(this.settings);
+			// not spend the interval (2026-10-20). Device-local, so it never lands in data.json.
+			this.lastReminderAt = Date.now();
+			saveReminderStamp(this.app, this.lastReminderAt);
 			await panel.closed;
 		});
 	}

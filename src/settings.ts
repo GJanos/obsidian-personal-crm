@@ -110,8 +110,6 @@ export interface PrmSettings {
 	reminderLookaheadDays: number;
 	/** Hours that must pass before the startup reminder shows again. */
 	reminderIntervalHours: number;
-	/** When the startup reminder last appeared (epoch ms), for the interval. */
-	lastReminderAt: number;
 	nextUpCount: number;
 
 	/** Also append a human-readable line under a heading in the person's note. */
@@ -182,7 +180,6 @@ export const DEFAULT_SETTINGS: PrmSettings = {
 	notifyOnStartup: true,
 	reminderLookaheadDays: 3,
 	reminderIntervalHours: 8,
-	lastReminderAt: 0,
 	nextUpCount: 5,
 
 	logToBody: true,
