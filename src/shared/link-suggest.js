@@ -21,18 +21,68 @@ export function insertLink(text, caret, link) {
     return { text: `${before}[[${link}]]${after}`, caret: before.length + link.length + 4 };
 }
 
-// The notes ([{ basename }]) whose name has `query` in it: names starting with it first, then ones
-// with a word starting with it, then the rest; shorter names first within each.
-export function linkMatches(files, query, limit = 8) {
+// A suggestion is a file or an entry that wraps one ({ file, basename, aliases }), so a bare
+// [{ basename }] still works for anything calling these helpers directly.
+const noteFile = note => note.file ?? note;
+const noteName = note => note.basename ?? note.file?.basename ?? "";
+
+// Aliases as a list: a list, or one comma-separated string (frontmatter allows both).
+function normalizeAliases(value) {
+    const list = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+    return list.map(alias => String(alias).trim()).filter(Boolean);
+}
+
+// The aliases a note's frontmatter gives it (`aliases`, or the old `alias` when `aliases` is
+// empty, as a converted note may leave it).
+function aliasesOf(app, file) {
+    const frontmatter = app.metadataCache?.getFileCache?.(file)?.frontmatter;
+    const aliases = normalizeAliases(frontmatter?.aliases);
+    return aliases.length ? aliases : normalizeAliases(frontmatter?.alias);
+}
+
+// How well `name` answers what was typed: names starting with it first, then ones with a word
+// starting with it, then the rest; -1 for no match.
+function matchRank(name, typed) {
+    return name.startsWith(typed) ? 0 : name.split(/[\s\-_.(]+/).some(word => word.startsWith(typed)) ? 1 : name.includes(typed) ? 2 : -1;
+}
+
+// The best way `note` answers `typed`: its own name first, else the closest alias. The text that
+// matched is kept so equal ranks compare by it, not by the note's name.
+function bestMatch(note, typed) {
+    const name = noteName(note);
+    const own = matchRank(name.toLowerCase(), typed);
+    if (own !== -1) return { rank: own, text: name, alias: null };
+    let best = null;
+    for (const alias of normalizeAliases(note.aliases)) {
+        const rank = matchRank(alias.toLowerCase(), typed);
+        if (rank === -1 || (best && (rank > best.rank || (rank === best.rank && alias.length >= best.text.length)))) continue;
+        best = { rank, text: alias, alias };
+    }
+    return best;
+}
+
+// The alias of `note` that `query` matched when the note's own name didn't: the picked link then
+// shows the alias, as the editor's own suggestions do. Null when the name matched, or none did.
+export function linkAlias(note, query) {
+    const typed = query.trim().toLowerCase();
+    return typed ? bestMatch(note, typed)?.alias ?? null : null;
+}
+
+// The notes whose name or an alias has `query` in it, ranked the same way either way; a name
+// match wins a tie, then the shorter match, then the shorter note name.
+export function linkMatches(notes, query, limit = 8) {
     const typed = query.trim().toLowerCase();
     if (!typed) return [];
-    const rank = name => name.startsWith(typed) ? 0 : name.split(/[\s\-_.(]+/).some(word => word.startsWith(typed)) ? 1 : name.includes(typed) ? 2 : -1;
-    return files
-        .map(file => ({ file, rank: rank(file.basename.toLowerCase()) }))
-        .filter(({ rank }) => rank !== -1)
-        .sort((a, b) => a.rank - b.rank || a.file.basename.length - b.file.basename.length || a.file.basename.localeCompare(b.file.basename))
+    return notes
+        .map(note => ({ note, match: bestMatch(note, typed) }))
+        .filter(({ match }) => match)
+        .sort((a, b) => a.match.rank - b.match.rank
+            || (a.match.alias === null ? 0 : 1) - (b.match.alias === null ? 0 : 1)
+            || a.match.text.length - b.match.text.length
+            || noteName(a.note).length - noteName(b.note).length
+            || noteName(a.note).localeCompare(noteName(b.note)))
         .slice(0, limit)
-        .map(({ file }) => file);
+        .map(({ note }) => note);
 }
 
 const LINK_SUGGEST_STYLE = `
@@ -42,6 +92,8 @@ const LINK_SUGGEST_STYLE = `
 .link-suggest-item { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border-radius: var(--radius-s, 4px);
   cursor: pointer; color: var(--text-normal); font-size: var(--font-ui-medium, 15px); }
 .link-suggest-item.is-selected, .link-suggest-item:hover { background: var(--background-modifier-hover); }
+.link-suggest-alias { color: var(--text-muted); font-size: var(--font-ui-smaller, 12px); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
 .link-suggest-folder { margin-left: auto; color: var(--text-faint); font-size: var(--font-ui-smaller, 12px);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 `;
@@ -49,28 +101,41 @@ const LINK_SUGGEST_STYLE = `
 // The boxes that already have it.
 const linkSuggestBoxes = new WeakSet();
 
-// The vault's markdown notes, filtered once per app and kept until the vault changes: rebuilding
-// the list on every keystroke is an O(vault) pass on the editor's thread (2026-10-21). It lives on
-// the app, not in a WeakMap: a plugin reload loads a new copy of this module, and the old copy's
-// listeners would otherwise stay on the app for good.
-const ELIGIBLE = "__linkSuggestEligible";
-function eligibleFiles(app) {
+// The vault's markdown notes with their aliases, filtered once per app and kept until the vault or
+// its metadata changes: rebuilding the list on every keystroke is an O(vault) pass on the editor's
+// thread (2026-10-21). It lives on the app, not in a WeakMap: a plugin reload loads a new copy of
+// this module, and the old copy's listeners would otherwise stay on the app for good. The key is
+// versioned: an older copy sharing the plain key would read a shape it doesn't understand and
+// leave its own list stale.
+const ELIGIBLE = "__linkSuggestEligibleNotes";
+function eligibleNotes(app) {
     let entry = app[ELIGIBLE];
     if (!entry) {
-        entry = { files: null };
+        entry = { notes: null };
+        app[ELIGIBLE] = entry;
+    }
+    if (!entry.wired) {
+        entry.wired = true;
         const invalidate = () => {
-            entry.files = null;
+            entry.notes = null;
         };
         app.vault.on?.("create", invalidate);
         app.vault.on?.("delete", invalidate);
         app.vault.on?.("rename", invalidate);
         // Changing "Excluded files" in Settings re-resolves the cache, with no vault event.
         app.metadataCache?.on?.("resolved", invalidate);
-        app[ELIGIBLE] = entry;
+        // An edited alias only shows up as changed metadata: refresh that note alone, so an
+        // ordinary note edit doesn't put an O(vault) rebuild on the next keystroke.
+        app.metadataCache?.on?.("changed", file => {
+            if (!entry.notes || !file?.path) return;
+            const note = entry.notes.find(note => noteFile(note).path === file.path);
+            if (note) note.aliases = aliasesOf(app, file);
+        });
     }
-    return (entry.files ??= app.vault
+    return (entry.notes ??= app.vault
         .getMarkdownFiles()
-        .filter(file => !app.metadataCache.isUserIgnored?.(file.path)));
+        .filter(file => !app.metadataCache.isUserIgnored?.(file.path))
+        .map(file => ({ file, basename: file.basename, aliases: aliasesOf(app, file) })));
 }
 
 // Gives `inputEl` the [[ suggestions; a second call on the same box does nothing (a React ref may
@@ -91,6 +156,7 @@ export function attachLinkSuggest(app, inputEl) {
     let list = null;
     let shown = [];
     let active = 0;
+    let typedQuery = "";
 
     const place = () => {
         if (!list) return;
@@ -141,8 +207,13 @@ export function attachLinkSuggest(app, inputEl) {
         if (setter) setter.call(inputEl, value);
         else inputEl.value = value;
     };
-    const pick = file => {
-        const next = insertLink(inputEl.value, inputEl.selectionStart ?? inputEl.value.length, app.metadataCache.fileToLinktext(file, "", true));
+    const pick = note => {
+        const linktext = app.metadataCache.fileToLinktext(noteFile(note), "", true);
+        // Picked by alias: the link shows the alias, as the editor's own suggestion does. An alias
+        // that would break the [[...]] syntax or the note's day line is dropped, not escaped.
+        const alias = linkAlias(note, typedQuery);
+        const display = alias && !/[\r\n]|\]\]|\|/.test(alias) ? alias : null;
+        const next = insertLink(inputEl.value, inputEl.selectionStart ?? inputEl.value.length, display ? `${linktext}|${display}` : linktext);
         setValue(next.text);
         inputEl.focus();
         inputEl.setSelectionRange(next.caret, next.caret);
@@ -163,12 +234,20 @@ export function attachLinkSuggest(app, inputEl) {
             holdEscape();
         }
         list.replaceChildren();
-        shown.forEach((file, i) => {
+        shown.forEach((note, i) => {
             const item = doc.createElement("div");
             item.className = i === active ? "link-suggest-item is-selected" : "link-suggest-item";
             const name = doc.createElement("span");
-            name.textContent = file.basename;
+            name.textContent = noteName(note);
             item.appendChild(name);
+            const alias = linkAlias(note, typedQuery);
+            if (alias) {
+                const also = doc.createElement("span");
+                also.className = "link-suggest-alias";
+                also.textContent = alias;
+                item.appendChild(also);
+            }
+            const file = noteFile(note);
             const folder = file.parent?.path && file.parent.path !== "/" ? file.parent.path : "";
             if (folder) {
                 const where = doc.createElement("span");
@@ -177,16 +256,15 @@ export function attachLinkSuggest(app, inputEl) {
                 item.appendChild(where);
             }
             item.addEventListener("mousedown", event => event.preventDefault());   // the box keeps the cursor
-            item.addEventListener("click", () => pick(file));
+            item.addEventListener("click", () => pick(note));
             list.appendChild(item);
         });
         place();
     };
     const update = () => {
-        const query = linkQuery(inputEl.value, inputEl.selectionStart ?? inputEl.value.length);
-        if (query === null) return close();
-        const files = eligibleFiles(app);
-        shown = linkMatches(files, query);
+        typedQuery = linkQuery(inputEl.value, inputEl.selectionStart ?? inputEl.value.length);
+        if (typedQuery === null) return close();
+        shown = linkMatches(eligibleNotes(app), typedQuery);
         active = 0;
         render();
     };
