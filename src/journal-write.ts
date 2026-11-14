@@ -5,7 +5,7 @@
  * that shape (api v2, `addDayLine`). The CRM decides only whether to ask — a log on a day that
  * already names the person is not written twice — and what shape to ask for:
  *
- * - `line`: a plain bullet in the day's log, `- Met [[Sam]] — coffee`.
+ * - `line`: one plain prose line in the day's log, `Met [[Sam]] — coffee` (no bullet).
  * - `highlight`: the shape Journal's Day entry writes for a person met, `h: Met [[Sam]]` with one
  *   `e:` detail per note line.
  * - `none`: nothing (and no Journal call at all).

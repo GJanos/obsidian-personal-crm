@@ -185,7 +185,7 @@ itself. The row's icon buttons stay for the fast path.
 Logging a contact also puts it in that day's journal, so the journal records the
 conversation rather than only the person's own history. Two shapes:
 
-- a plain line in the day's log — `- Met [[Sam]] — coffee`
+- a plain line in the day's log — `Met [[Sam]] — coffee` (not a bullet)
 - a highlight — `h: Met [[Sam]]`, with one `e:` detail per line of the notes box
 
 The Journal plugin's Day entry writes the highlight shape for someone met, so the
